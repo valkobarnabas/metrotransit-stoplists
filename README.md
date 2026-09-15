@@ -15,9 +15,7 @@ Print from the poster page: Letter, actual size, no headers or footers.
 
 [curate.html](curate.html) is a map of every stop. Click to drop a landmark, name it, pick an icon, then click the stops that should show it (or right-click and drag from the pin to box-select). Click the map to deselect before placing another.
 
-Labels save in this browser. **Download `locations.json`** and put it in `data/` so hosted posters pick up the changes. The public site only shows what is in that committed file.
-
-The map uses [Leaflet](https://leafletjs.com/) and free [OpenStreetMap](https://www.openstreetmap.org/copyright) tiles. No API key.
+The map uses [Leaflet](https://leafletjs.com/) and free [OpenStreetMap](https://www.openstreetmap.org/copyright) tiles.
 
 ## GitHub Pages
 

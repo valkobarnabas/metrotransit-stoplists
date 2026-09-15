@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Locations of interest · Metro Transit stop list posters</title>
+  <link rel="icon" type="image/png" href="data/metrologo-mark.png" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body class="curate-page">
+  <div class="curate-shell">
+    <header class="curate-top">
+      <p class="back"><a href="index.html">← Stops served posters</a></p>
+      <h1>Locations of interest</h1>
+      <p class="lead">Click the map to drop a landmark, then click the stops that should show it. Right-click and drag from a landmark to assign every stop in the box. Click the map to deselect before placing another. On the <a href="index.html">poster page</a>, check <strong>Use locations from the curator in this browser</strong> to preview them. Download JSON only if you want to commit it for the hosted site.</p>
+    </header>
+    <div class="curate-app">
+      <aside class="curate-side">
+        <div class="picked-name" id="lm-title">Landmarks</div>
+        <div class="picked-meta" id="lm-meta"></div>
+        <label class="field">
+          <span>Find a stop</span>
+          <input id="stop-q" type="search" autocomplete="off" placeholder="0716 or University at Orchard" />
+        </label>
+        <div id="stop-results" class="results" hidden></div>
+        <p class="map-hint" id="map-hint">Click the map to place a landmark.</p>
+        <div id="editor" class="lm-editor" hidden>
+          <label class="field">
+            <span>Landmark name</span>
+            <input id="lm-name" type="text" placeholder="UW Hospital" />
+          </label>
+          <div class="field">
+            <span>Icon</span>
+            <div id="lm-icons" class="icon-menu static"></div>
+          </div>
+          <div class="lm-assigned" id="lm-assigned"></div>
+          <button type="button" class="clear-loi" id="lm-delete">Delete landmark</button>
+        </div>
+        <div id="lm-list" class="lm-list"></div>
+        <div class="curate-io">
+          <button type="button" id="download" class="ghost">Download locations.json</button>
+          <label class="ghost file-btn">Import JSON<input id="import" type="file" accept="application/json,.json" hidden /></label>
+          <button type="button" id="clear-all" class="ghost">Clear all landmarks</button>
+        </div>
+        <p id="err" class="err" hidden></p>
+      </aside>
+      <div id="map" class="curate-map" role="application" aria-label="Landmark map"></div>
+    </div>
+  </div>
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="served.js"></script>
+  <script src="curate.js"></script>
+</body>
+</html>

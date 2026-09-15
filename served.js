@@ -1,0 +1,1843 @@
+/**
+ * Stops-served posters: remaining stops from a chosen stop, one sheet per
+ * route direction / numbered variant (parent unnumbered trips fold in).
+ */
+const DEFAULT_RADIUS = 250;
+const FT_PER_M = 3.280839895;
+const FORK_LONG = 4;
+const ROUTE_MAP_URL =
+  "https://www.cityofmadison.com/sites/default/files/metro/images/maps/route-maps/{route}.png";
+
+/** Same close-terminus pairs as github/: one * footnote, not variant rows. */
+const CLOSE_TERMINUS_PAIRS = [
+  {
+    route: "C",
+    dayCode: "2091",
+    eveningCode: "2916",
+    destNote: {
+      type: "terminus",
+      lead: "Trips on weekdays after 7pm and on weekends terminate at southbound ",
+      stopName: "Highland at Observatory",
+      stopCode: "2916",
+    },
+  },
+  {
+    route: "F",
+    dayCode: "10001",
+    eveningCode: "10004",
+    destNote: {
+      type: "terminus",
+      lead: "Trips on weekdays after 8pm and on weekends terminate at ",
+      stopName: "Junction at Park And Ride",
+      stopCode: "10004",
+    },
+  },
+];
+
+function qrLib() {
+  if (typeof globalThis !== "undefined" && globalThis.QRCode && globalThis.QRCode.create) {
+    return globalThis.QRCode;
+  }
+  if (typeof require === "function") {
+    try {
+      return require("qrcode");
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}
+
+function metroLogoDataUri() {
+  if (typeof globalThis !== "undefined" && globalThis.METRO_LOGO_DATA_URI) {
+    return globalThis.METRO_LOGO_DATA_URI;
+  }
+  if (typeof require === "function") {
+    try {
+      const fs = require("fs");
+      const path = require("path");
+      const files = [
+        path.join(__dirname, "data", "metrologo-mark.png"),
+        path.join(__dirname, "..", "github", "data", "metrologo-mark.png"),
+        path.join(__dirname, "..", "metrologo-mark.png"),
+      ];
+      for (const file of files) {
+        if (fs.existsSync(file)) return `data:image/png;base64,${fs.readFileSync(file).toString("base64")}`;
+      }
+    } catch {
+      /* browser bundle */
+    }
+  }
+  return "";
+}
+
+function qrBits(text) {
+  const QRCode = qrLib();
+  if (!QRCode || !QRCode.create || !text) return "";
+  const qr = QRCode.create(text, { errorCorrectionLevel: "H" });
+  const n = qr.modules.size;
+  let bits = "";
+  for (let r = 0; r < n; r++) {
+    for (let c = 0; c < n; c++) bits += qr.modules.get(r, c) ? "1" : "0";
+  }
+  return bits;
+}
+
+function qrSvgFromBits(bits) {
+  if (!bits) return "";
+  const n = Math.round(Math.sqrt(bits.length));
+  if (!n) return "";
+  const margin = 1;
+  const dim = n + margin * 2;
+  let d = "";
+  for (let r = 0; r < n; r++) {
+    for (let c = 0; c < n; c++) {
+      if (bits[r * n + c] === "1") d += `M${c + margin} ${r + margin}h1v1h-1z`;
+    }
+  }
+  const logo = dim * 0.28;
+  const x = (dim - logo) / 2;
+  const cx = dim / 2;
+  const hole = logo * 0.56;
+  const mark = metroLogoDataUri();
+  const logoSvg = mark
+    ? `<circle cx="${cx}" cy="${cx}" r="${hole}" fill="#fff"/><image href="${mark}" x="${x}" y="${x}" width="${logo}" height="${logo}"/>`
+    : "";
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${dim} ${dim}" shape-rendering="crispEdges" aria-hidden="true">
+    <rect width="${dim}" height="${dim}" fill="#fff"/>
+    <path d="${d}" fill="#111"/>
+    ${logoSvg}
+  </svg>`;
+}
+
+function qrSvgWithLogo(text) {
+  return qrSvgFromBits(qrBits(text));
+}
+
+function ensureMapQr(pack) {
+  if (!pack || pack.mapQr) return pack && pack.mapQr;
+  const mapQr = {};
+  for (const r of pack.routes || []) {
+    if (r.s) continue;
+    const bits = qrBits(routeMapUrl(r.n));
+    if (bits) mapQr[r.n] = bits;
+  }
+  pack.mapQr = mapQr;
+  return mapQr;
+}
+
+function routeMapCode(poster, pack) {
+  const route = (pack.routeByName && pack.routeByName.get(poster.routeName)) || {};
+  if (route.s) return "";
+  return String(poster.routeName || "").trim();
+}
+
+function routeMapUrl(code) {
+  if (!code) return "";
+  return ROUTE_MAP_URL.replace("{route}", encodeURIComponent(code));
+}
+
+function mapQrHtml(poster, pack) {
+  const code = routeMapCode(poster, pack);
+  const url = routeMapUrl(code);
+  if (!url) return "";
+  const bits = (pack.mapQr && pack.mapQr[code]) || qrBits(url);
+  const svg = qrSvgFromBits(bits);
+  if (!svg) return "";
+  return `<div class="qr-block">
+    <a href="${escapeHtml(url)}" target="_blank" rel="noopener" title="Map of Route ${escapeHtml(code)}">
+      ${svg}
+      <div class="qr-cap">Map of<br />Route</div>
+    </a>
+  </div>`;
+}
+
+const CARDINAL = {
+  0: "northbound",
+  90: "eastbound",
+  180: "southbound",
+  270: "westbound",
+};
+
+const ICONS = {
+  hospital: { label: "Hospital", svg: '<svg viewBox="0 0 16 16" aria-hidden="true"><rect x="1" y="1" width="14" height="14" rx="2" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M8 4v8M4 8h8" stroke="currentColor" stroke-width="1.6" fill="none"/></svg>' },
+  university: { label: "University", svg: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M1.5 7.2 8 3.5 14.5 7.2 8 10.8z" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M4 8.4v3.2c1.3.8 2.6 1.2 4 1.2s2.7-.4 4-1.2V8.4" fill="none" stroke="currentColor" stroke-width="1.3"/></svg>' },
+  capitol: { label: "Capitol", svg: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 1.5 3 6h10z" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M4 6.5v6h8v-6M2.5 13.2h11" stroke="currentColor" stroke-width="1.3" fill="none"/><path d="M8 1.5v2" stroke="currentColor" stroke-width="1.3"/></svg>' },
+  library: { label: "Library", svg: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 3.5h6.5v10H3zM9.5 5.5H13v8H9.5" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M4.5 6h3.5M4.5 8.2h3.5M4.5 10.4h3.5" stroke="currentColor" stroke-width="1.1"/></svg>' },
+  school: { label: "School", svg: '<svg viewBox="0 0 16 16" aria-hidden="true"><rect x="2.5" y="6" width="11" height="8" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M8 2.5 2.5 6h11zM8 6v8" fill="none" stroke="currentColor" stroke-width="1.3"/></svg>' },
+  park: { label: "Park", svg: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 2.5c-2.4 0-4 2.2-4 4.2C4 9.2 8 13.5 8 13.5s4-4.3 4-6.8C12 4.7 10.4 2.5 8 2.5z" fill="none" stroke="currentColor" stroke-width="1.3"/><circle cx="8" cy="6.6" r="1.3" fill="currentColor"/></svg>' },
+  shopping: { label: "Shopping", svg: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 5.5h8l-.7 7.2H4.7z" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M6 5.5V4.2A2 2 0 0 1 8 2.2a2 2 0 0 1 2 2v1.3" fill="none" stroke="currentColor" stroke-width="1.3"/></svg>' },
+  government: { label: "Government", svg: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 13.5h10M4 6v7.5M8 6v7.5M12 6v7.5M2.5 6h11M8 2.5 2.5 6h11z" fill="none" stroke="currentColor" stroke-width="1.3"/></svg>' },
+  museum: { label: "Museum", svg: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 13.5h11M4 7.5v6M8 7.5v6M12 7.5v6M2.5 7.5h11M3 4.5h10L8 2.2z" fill="none" stroke="currentColor" stroke-width="1.3"/></svg>' },
+  airport: { label: "Airport", svg: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 1.8v12.4M3.2 6.2 8 8.2l4.8-2M3.5 12.8 8 10.6l4.5 2.2" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/></svg>' },
+  recreation: { label: "Recreation", svg: '<svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="3.4" r="1.4" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M8 5.2v4.2L5 13.2M8 9.4l3 3.8M4.2 7.8h7.6" fill="none" stroke="currentColor" stroke-width="1.3"/></svg>' },
+  transit: { label: "Transit", svg: '<svg viewBox="0 0 16 16" aria-hidden="true"><rect x="3" y="2.5" width="10" height="8.5" rx="1.2" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M3 7.2h10M5 13h.8M10.2 13H11" stroke="currentColor" stroke-width="1.3"/><circle cx="5.4" cy="12.2" r="1" fill="none" stroke="currentColor" stroke-width="1.2"/><circle cx="10.6" cy="12.2" r="1" fill="none" stroke="currentColor" stroke-width="1.2"/></svg>' },
+  landmark: { label: "Landmark", svg: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 1.8 9.8 6h4.2l-3.4 2.6 1.3 4.2L8 10.4 4.1 12.8 5.4 8.6 2 6h4.2z" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/></svg>' },
+  church: { label: "Church", svg: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 1.6v3.2M6.6 3.2H9.4M8 4.8 3.2 8.2V14h9.6V8.2zM8 8.2V14" fill="none" stroke="currentColor" stroke-width="1.3"/></svg>' },
+  stadium: { label: "Stadium", svg: '<svg viewBox="0 0 16 16" aria-hidden="true"><ellipse cx="8" cy="8" rx="6.2" ry="3.2" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M2.2 7.2 4 12.5h8l1.8-5.3" fill="none" stroke="currentColor" stroke-width="1.3"/></svg>' },
+  grocery: { label: "Grocery", svg: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 4.2h2.1l1.2 7.4h6.8l1.4-5.2H5.2" fill="none" stroke="currentColor" stroke-width="1.3"/><circle cx="7.2" cy="13.2" r="1" fill="currentColor"/><circle cx="11.4" cy="13.2" r="1" fill="currentColor"/></svg>' },
+};
+
+function escapeHtml(s) {
+  return String(s)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+function streetDirectionLabel(stop) {
+  const raw = String(stop.cardinal_direction ?? stop.cd ?? "").trim();
+  const dir = raw === "" ? "" : CARDINAL[Number(raw)];
+  const street = (stop.primary_street || stop.street || "").trim();
+  if (dir && street) return `${dir} ${street}`;
+  return street || dir || "";
+}
+
+function formatHeadboard(routeShortName, tripHeadsign) {
+  const raw = String(tripHeadsign || "").trim();
+  const branched = raw.match(/^(\d+)-(.+)$/);
+  if (branched) {
+    const num = branched[1];
+    const dest = branched[2].trim();
+    const code = /^[A-Za-z]$/.test(routeShortName) ? `${routeShortName}${num}` : num;
+    return { code, dest: dest.toUpperCase().replace(/\./g, "") };
+  }
+  return { code: String(routeShortName), dest: raw.toUpperCase().replace(/\./g, "") };
+}
+
+function boardParts(code) {
+  const raw = String(code || "");
+  const letter = raw.match(/^([A-Za-z]+)(\d*)$/);
+  if (letter) {
+    return { kind: 0, base: letter[1].toUpperCase(), variant: letter[2] || "" };
+  }
+  const numbered = raw.match(/^(\d+)([A-Za-z]*)$/);
+  if (numbered) return { kind: 1, base: numbered[1], variant: numbered[2] || "" };
+  return { kind: 2, base: raw.toUpperCase(), variant: "" };
+}
+
+function compareBoardCodes(a, b) {
+  const pa = boardParts(a);
+  const pb = boardParts(b);
+  if (pa.kind !== pb.kind) return pa.kind - pb.kind;
+  if (pa.base !== pb.base) {
+    return pa.kind === 1
+      ? Number(pa.base) - Number(pb.base)
+      : pa.base.localeCompare(pb.base, "en");
+  }
+  const va = pa.variant === "" ? Number.POSITIVE_INFINITY : Number(pa.variant) || 0;
+  const vb = pb.variant === "" ? Number.POSITIVE_INFINITY : Number(pb.variant) || 0;
+  if (va !== vb) return va - vb;
+  return String(a).localeCompare(String(b), "en");
+}
+
+function headsignLabel(board) {
+  const dest = String((board && board.dest) || "").trim();
+  const code = String((board && board.code) || "").trim();
+  if (!dest) return code;
+  if (/\bTO\b/i.test(dest)) return dest;
+  if (code && dest.toUpperCase().startsWith(code.toUpperCase() + " ")) return dest;
+  return `${code} TO ${dest}`;
+}
+
+function distM(a, b) {
+  if (!a || !b || a.lat == null || b.lat == null) return Infinity;
+  const R = 6371000;
+  const toRad = (d) => (d * Math.PI) / 180;
+  const dLat = toRad(b.lat - a.lat);
+  const dLon = toRad(b.lon - a.lon);
+  const lat1 = toRad(a.lat);
+  const lat2 = toRad(b.lat);
+  const h =
+    Math.sin(dLat / 2) ** 2 + Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLon / 2) ** 2;
+  return 2 * R * Math.asin(Math.min(1, Math.sqrt(h)));
+}
+
+function metersToFeet(m) {
+  return Number(m) * FT_PER_M;
+}
+
+function roundFeetUp10(m) {
+  const ft = metersToFeet(m);
+  if (!Number.isFinite(ft) || ft <= 0) return 10;
+  return Math.ceil(ft / 10) * 10;
+}
+
+function formatDateRange(start, end) {
+  const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+  const parseYmd = (s) => new Date(Number(s.slice(0, 4)), Number(s.slice(4, 6)) - 1, Number(s.slice(6, 8)));
+  const a = parseYmd(start);
+  const b = parseYmd(end);
+  return `${a.getDate()} ${months[a.getMonth()]} – ${b.getDate()} ${months[b.getMonth()]} ${b.getFullYear()}`;
+}
+
+function bearingDeg(a, b) {
+  const toRad = (d) => (d * Math.PI) / 180;
+  const toDeg = (r) => (r * 180) / Math.PI;
+  const lat1 = toRad(a.lat);
+  const lat2 = toRad(b.lat);
+  const dLon = toRad(b.lon - a.lon);
+  const y = Math.sin(dLon) * Math.cos(lat2);
+  const x = Math.cos(lat1) * Math.sin(lat2) - Math.sin(lat1) * Math.cos(lat2) * Math.cos(dLon);
+  return (toDeg(Math.atan2(y, x)) + 360) % 360;
+}
+
+function headingWordFromBearing(deg) {
+  const d = (deg + 360) % 360;
+  if (d >= 45 && d < 135) return "eastbound";
+  if (d >= 135 && d < 225) return "southbound";
+  if (d >= 225 && d < 315) return "westbound";
+  return "northbound";
+}
+
+function minutesFromTenths(t) {
+  return Number(t) / 10;
+}
+
+function roundMinutes(n) {
+  if (!Number.isFinite(n) || n < 0) return 0;
+  return Math.round(n);
+}
+
+function formatMinutes(n) {
+  const m = roundMinutes(n);
+  return `${m} min.`;
+}
+
+function routeMap(pack) {
+  const map = new Map();
+  for (const r of pack.routes || []) map.set(String(r.n), r);
+  return map;
+}
+
+function patternsForStop(pack, stopCode) {
+  const code = String(stopCode);
+  const out = [];
+  for (const p of pack.patterns || []) {
+    const s = p.s || [];
+    let idx = -1;
+    for (let i = 0; i < s.length - 1; i++) {
+      if (s[i] === code) {
+        idx = i;
+        break;
+      }
+    }
+    if (idx < 0) continue;
+    const remaining = s.slice(idx + 1);
+    const originT = minutesFromTenths(p.m[idx] || 0);
+    const minutes = remaining.map((_, j) => minutesFromTenths(p.m[idx + 1 + j] || 0) - originT);
+    out.push({
+      r: p.r,
+      d: p.d,
+      board: { code: p.k, dest: p.e },
+      trips: p.n || 1,
+      remaining,
+      minutes,
+    });
+  }
+  return out;
+}
+
+function posterKeyGroups(instances, routeByName) {
+  const byRouteDir = new Map();
+  for (const inst of instances) {
+    const key = `${inst.r}\t${inst.d}`;
+    if (!byRouteDir.has(key)) byRouteDir.set(key, []);
+    byRouteDir.get(key).push(inst);
+  }
+  const posters = [];
+  for (const [key, list] of byRouteDir) {
+    const [routeName, dirId] = key.split("\t");
+    const school = !!(routeByName && routeByName.get(routeName) && routeByName.get(routeName).s);
+    if (school) {
+      const byCode = new Map();
+      for (const inst of list) {
+        const code = inst.board.code || routeName;
+        if (!byCode.has(code)) byCode.set(code, []);
+        byCode.get(code).push(inst);
+      }
+      const codes = [...byCode.keys()].sort(compareBoardCodes);
+      for (const code of codes) {
+        posters.push({
+          routeName,
+          dirId,
+          titleCode: code,
+          familyBase: boardParts(code).base,
+          instances: byCode.get(code),
+        });
+      }
+      continue;
+    }
+    const byFamily = new Map();
+    for (const inst of list) {
+      const parts = boardParts(inst.board.code);
+      const fam = `${parts.kind}:${parts.base}`;
+      if (!byFamily.has(fam)) byFamily.set(fam, { parts, items: [] });
+      byFamily.get(fam).items.push(inst);
+    }
+    for (const { parts, items } of byFamily.values()) {
+      const numbered = new Map();
+      const parent = [];
+      for (const inst of items) {
+        const v = boardParts(inst.board.code).variant;
+        if (v) {
+          if (!numbered.has(v)) numbered.set(v, []);
+          numbered.get(v).push(inst);
+        } else parent.push(inst);
+      }
+      if (numbered.size) {
+        const variants = [...numbered.keys()].sort((a, b) => Number(a) - Number(b) || String(a).localeCompare(String(b)));
+        for (const v of variants) {
+          posters.push({
+            routeName,
+            dirId,
+            titleCode: `${parts.base}${v}`,
+            familyBase: parts.base,
+            instances: numbered.get(v).concat(parent),
+          });
+        }
+      } else {
+        posters.push({
+          routeName,
+          dirId,
+          titleCode: parent[0] ? parent[0].board.code : parts.base,
+          familyBase: parts.base,
+          instances: parent,
+        });
+      }
+    }
+  }
+  return posters;
+}
+
+function uniqueBoards(items) {
+  const seen = new Set();
+  const out = [];
+  for (const inst of items) {
+    const key = headsignLabel(inst.board);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(inst.board);
+  }
+  return out;
+}
+
+function emitStop(code, serving, subset, emittedEnds, onlyBoards) {
+  const rows = [];
+  let num = 0;
+  let den = 0;
+  for (const inst of serving) {
+    const m = inst.minAt[code];
+    if (m == null) continue;
+    num += m * inst.trips;
+    den += inst.trips;
+  }
+  rows.push({
+    type: "stop",
+    code,
+    minutes: den ? num / den : 0,
+    trips: den,
+    onlyBoards: onlyBoards && onlyBoards.length ? onlyBoards : null,
+  });
+  const ends = [];
+  for (const inst of subset) {
+    const idx = inst.seq.indexOf(code);
+    if (idx < 0) continue;
+    inst.seq.splice(0, idx + 1);
+    if (!inst.seq.length) ends.push(inst.board);
+  }
+  const boards = [];
+  const seen = new Set();
+  for (const board of ends) {
+    const dest = headsignLabel(board);
+    const key = `${dest}\t${code}`;
+    if (seen.has(dest) || emittedEnds.has(key)) continue;
+    seen.add(dest);
+    emittedEnds.add(key);
+    boards.push(board);
+  }
+  if (boards.length) rows.push({ type: "end", boards, at: code });
+  return rows;
+}
+
+function firstIndependentFork(instances) {
+  const items = instances.map((inst) => ({
+    inst,
+    seq: inst.remaining.slice(),
+  }));
+  const active = () => items.filter((i) => i.seq.length);
+  while (true) {
+    const act = active();
+    if (!act.length) return null;
+    const heads = [...new Set(act.map((i) => i.seq[0]))];
+    if (heads.length === 1) {
+      for (const i of act) {
+        const idx = i.seq.indexOf(heads[0]);
+        if (idx >= 0) i.seq.splice(0, idx + 1);
+      }
+      continue;
+    }
+    const independent = heads.filter((h) =>
+      act.every((i) => i.seq[0] === h || !i.seq.includes(h))
+    );
+    if (independent.length === heads.length && heads.length > 1) {
+      return heads.map((h) => {
+        const groupItems = act.filter((i) => i.seq[0] === h);
+        return {
+          instances: groupItems.map((x) => x.inst),
+          seqs: groupItems.map((i) => i.seq.slice()),
+          remain: Math.max(...groupItems.map((i) => i.seq.length)),
+        };
+      });
+    }
+    const pick = independent[0] || heads[0];
+    for (const i of act) {
+      if (!i.seq.includes(pick)) continue;
+      const idx = i.seq.indexOf(pick);
+      i.seq.splice(0, idx + 1);
+    }
+  }
+}
+
+function shouldSplitFork(groups) {
+  const sets = groups.map((g) => {
+    const s = new Set();
+    for (const seq of g.seqs || []) {
+      for (const code of seq) s.add(code);
+    }
+    return s;
+  });
+  if (sets.length < 2) return false;
+  const exclusives = sets.map((s, i) => {
+    let n = 0;
+    for (const code of s) {
+      if (sets.every((other, j) => j === i || !other.has(code))) n += 1;
+    }
+    return n;
+  });
+  const shared = [...sets[0]].filter((code) => sets.every((s) => s.has(code))).length;
+  if (shared > 0) return Math.max(...exclusives) > FORK_LONG;
+  return Math.min(...exclusives) > FORK_LONG;
+}
+
+function partitionPosters(instances) {
+  const fork = firstIndependentFork(instances);
+  if (!fork) return [instances];
+  if (shouldSplitFork(fork)) {
+    return fork.flatMap((g) => partitionPosters(g.instances));
+  }
+  return [instances];
+}
+
+function primaryBoard(instances) {
+  const tally = new Map();
+  for (const inst of instances) {
+    const key = headsignLabel(inst.board);
+    if (!tally.has(key)) tally.set(key, { board: inst.board, trips: 0 });
+    tally.get(key).trips += inst.trips;
+  }
+  return [...tally.values()].sort((a, b) => b.trips - a.trips)[0]?.board || null;
+}
+
+function exclusiveStopCount(group, others) {
+  const otherSet = new Set();
+  for (const g of others) {
+    for (const inst of g.items) {
+      for (const code of inst.seq) otherSet.add(code);
+    }
+  }
+  const mine = new Set();
+  for (const inst of group.items) {
+    for (const code of inst.seq) mine.add(code);
+  }
+  let n = 0;
+  for (const code of mine) {
+    if (!otherSet.has(code)) n += 1;
+  }
+  return n;
+}
+
+function matchingCloseTerminus(routeName, rows) {
+  const codes = new Set();
+  for (const row of rows || []) {
+    if (row.type === "stop") codes.add(String(row.code));
+  }
+  const route = String(routeName || "").toUpperCase();
+  for (const rule of CLOSE_TERMINUS_PAIRS) {
+    if (route !== rule.route) continue;
+    if (codes.has(rule.dayCode) && codes.has(rule.eveningCode)) return rule;
+  }
+  return null;
+}
+
+function applyCloseTermini(rows, routeName) {
+  const rule = matchingCloseTerminus(routeName, rows);
+  if (!rule) return { rows, destNote: null };
+  const day = rows.find((r) => r.type === "stop" && r.code === rule.dayCode);
+  const evening = rows.find((r) => r.type === "stop" && r.code === rule.eveningCode);
+  let num = 0;
+  let den = 0;
+  for (const row of [day, evening]) {
+    if (!row) continue;
+    const trips = Number(row.trips) || 0;
+    num += (Number(row.minutes) || 0) * trips;
+    den += trips;
+  }
+  const cleaned = [];
+  for (const row of rows) {
+    if (row.type === "end" && (row.at === rule.dayCode || row.at === rule.eveningCode)) continue;
+    if (row.type === "stop" && row.code === rule.eveningCode) continue;
+    if (row.type === "stop" && row.code === rule.dayCode) {
+      cleaned.push({
+        ...row,
+        onlyBoards: null,
+        starTerminus: true,
+        minutes: den ? num / den : row.minutes,
+        trips: den || row.trips,
+      });
+      continue;
+    }
+    cleaned.push(row);
+  }
+  return { rows: cleaned, destNote: rule.destNote };
+}
+
+function mergeInstances(instances) {
+  const items = instances.map((inst) => ({
+    board: inst.board,
+    trips: inst.trips,
+    seq: inst.remaining.slice(),
+    minAt: Object.fromEntries(inst.remaining.map((s, i) => [s, inst.minutes[i]])),
+  }));
+  const emittedEnds = new Set();
+
+  function walk(subset, onlyBoards) {
+    const rows = [];
+    const active = () => subset.filter((i) => i.seq.length);
+    while (true) {
+      const act = active();
+      if (!act.length) break;
+      const heads = [...new Set(act.map((i) => i.seq[0]))];
+      if (heads.length === 1) {
+        rows.push(...emitStop(heads[0], act, subset, emittedEnds, onlyBoards));
+        continue;
+      }
+      const independent = heads.filter((h) =>
+        act.every((i) => i.seq[0] === h || !i.seq.includes(h))
+      );
+      if (independent.length === heads.length && heads.length > 1) {
+        const groups = heads
+          .map((h) => {
+            const groupItems = act.filter((i) => i.seq[0] === h);
+            return {
+              items: groupItems,
+              trips: groupItems.reduce((s, i) => s + i.trips, 0),
+            };
+          })
+          .sort((a, b) => b.trips - a.trips);
+        for (const g of groups) {
+          const ex = exclusiveStopCount(g, groups.filter((x) => x !== g));
+          const tag = ex > 0 && ex <= FORK_LONG ? uniqueBoards(g.items) : null;
+          rows.push(...walk(g.items, tag));
+        }
+        break;
+      }
+      const pick = independent[0] || heads[0];
+      const serving = act.filter((i) => i.seq.includes(pick));
+      const tag =
+        serving.length < act.length && serving.length
+          ? uniqueBoards(serving)
+          : onlyBoards;
+      rows.push(...emitStop(pick, serving, subset, emittedEnds, tag));
+    }
+    return rows;
+  }
+
+  return walk(items);
+}
+
+function routeHeading(originCode, rows, geo, fallback) {
+  const origin = geo[originCode];
+  if (!origin) return fallback || "";
+  for (const row of rows) {
+    if (row.type !== "stop") continue;
+    const g = geo[row.code];
+    if (!g) continue;
+    if (distM(origin, g) < 120) continue;
+    return headingWordFromBearing(bearingDeg(origin, g));
+  }
+  for (const row of rows) {
+    if (row.type !== "stop") continue;
+    const g = geo[row.code];
+    if (!g) continue;
+    if (distM(origin, g) < 40) continue;
+    return headingWordFromBearing(bearingDeg(origin, g));
+  }
+  return fallback || "";
+}
+
+function sameRouteName(a, b) {
+  return String(a || "").toLowerCase() === String(b || "").toLowerCase();
+}
+
+function transfersForStop(stopCode, posterRouteName, radius, pack, opts) {
+  const excludeSchool = !!(opts && opts.excludeSchool);
+  const geo = pack.geo || {};
+  const stopRoutes = pack.stopRoutes || {};
+  const origin = geo[stopCode];
+  const here = stopRoutes[stopCode] || [];
+  const keep = (r) => !sameRouteName(r.n, posterRouteName) && !(excludeSchool && r.s);
+  const same = here.filter(keep);
+  const nearby = [];
+  if (origin && radius > 0) {
+    for (const [code, g] of Object.entries(geo)) {
+      if (code === stopCode) continue;
+      const d = distM(origin, g);
+      if (metersToFeet(d) > radius) continue;
+      for (const r of stopRoutes[code] || []) {
+        if (!keep(r)) continue;
+        if (here.some((x) => sameRouteName(x.n, r.n))) continue;
+        nearby.push({ r, code, d });
+      }
+    }
+  }
+  const best = new Map();
+  for (const x of nearby) {
+    const prev = best.get(x.r.n);
+    if (!prev || x.d < prev.d || (x.d === prev.d && x.code < prev.code)) best.set(x.r.n, x);
+  }
+  same.sort((a, b) => compareBoardCodes(a.n, b.n));
+  const others = [...best.values()].sort(
+    (a, b) => a.d - b.d || compareBoardCodes(a.r.n, b.r.n)
+  );
+  return { same, others };
+}
+
+function squareHtml(route) {
+  const bg = route.c || "#333366";
+  const ink = route.t || "#fff";
+  return `<span class="sq" style="background:${escapeHtml(bg)};color:${escapeHtml(ink)}">${escapeHtml(route.n)}</span>`;
+}
+
+function transferGroups(xfer) {
+  const groups = [];
+  if (xfer.same.length) groups.push({ routes: xfer.same });
+  const byStop = new Map();
+  for (const x of xfer.others) {
+    let g = byStop.get(x.code);
+    if (!g) {
+      g = { code: x.code, d: x.d, routes: [] };
+      byStop.set(x.code, g);
+    }
+    g.routes.push(x.r);
+    if (x.d < g.d) g.d = x.d;
+  }
+  const nearby = [...byStop.values()].sort(
+    (a, b) => a.d - b.d || String(a.code).localeCompare(b.code)
+  );
+  for (const g of nearby) {
+    g.routes.sort((a, b) => compareBoardCodes(a.n, b.n));
+    groups.push({ routes: g.routes, code: g.code, d: g.d });
+  }
+  return groups;
+}
+
+function groupHtml(group) {
+  const squares = group.routes.map(squareHtml).join("");
+  if (!group.code) return `<span class="xfer-cluster">${squares}</span>`;
+  const feet = roundFeetUp10(group.d);
+  return `<span class="xfer-cluster">${squares}<span class="xfer-stop"> (#${escapeHtml(group.code)}, ${feet} ft. away)</span></span>`;
+}
+
+function transfersHtml(xfer, geo) {
+  const groups = transferGroups(xfer);
+  if (!groups.length) return "";
+  return `<span class="xfer">${groups.map((g) => groupHtml(g)).join('<span class="xfer-plus">+</span>')}</span>`;
+}
+
+function ledParts(board) {
+  const code = String((board && board.code) || "").trim();
+  let dest = String((board && board.dest) || "")
+    .replace(/[\u2708\uFE0E\uFE0F]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (code) {
+    const esc = code.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    dest = dest.replace(new RegExp(`^${esc}\\s+TO\\s+`, "i"), "");
+  }
+  dest = dest.replace(/^TO\s+/i, "");
+  return { code, dest };
+}
+
+function ledPlaneSvg() {
+  return `<svg class="led-plane" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M7.16 2.25L9.71 10.8 4.7 10.8 3.18 9.12 1.2 9.12 2.46 12.05 1.2 14.93 3.18 14.93 4.68 13.29 9.69 13.29 7.16 21.75 9.14 21.9 14.6 13.29 21.53 13.29C21.88 13.29 22.18 13.17 22.43 12.95 22.68 12.72 22.8 12.42 22.8 12.05 22.8 11.88 22.77 11.72 22.7 11.57 22.64 11.42 22.55 11.29 22.43 11.17 22.31 11.05 22.17 10.96 22.02 10.9 21.86 10.83 21.7 10.8 21.53 10.8L14.64 10.8 9.14 2.1Z"/></svg>`;
+}
+
+function headboardDestHtml(dest) {
+  if (String(dest || "").trim() === "AIRPORT") {
+    return `${ledPlaneSvg()}<span class="led-word">AIRPORT</span>${ledPlaneSvg()}`;
+  }
+  return escapeHtml(dest);
+}
+
+function signLabel(board) {
+  const parts = ledParts(board);
+  return [parts.code, parts.dest].filter(Boolean).join(" TO ");
+}
+
+function joinNoteLeds(boards) {
+  const chips = boards.map((b) => `<span class="note-led">${escapeHtml(signLabel(b))}</span>`);
+  if (chips.length <= 1) return chips[0] || "";
+  if (chips.length === 2) return `${chips[0]} and ${chips[1]}`;
+  return `${chips.slice(0, -1).join(", ")}, and ${chips[chips.length - 1]}`;
+}
+
+function endNoteHtml(boards, atCode, geo) {
+  const list = (Array.isArray(boards) ? boards : [boards]).filter(Boolean);
+  const g = (geo && atCode && geo[atCode]) || {};
+  const where = g.n || atCode || "the last stop listed above";
+  return `<p class="tt-note">Trips signed ${joinNoteLeds(list)} terminate at <span class="term-name">${escapeHtml(where)}</span>.</p>`;
+}
+
+function destNoteHtml(note) {
+  if (!note) return "";
+  if (note.type === "terminus") {
+    return `<p class="tt-note">*${escapeHtml(note.lead)}<span class="term-name">${escapeHtml(
+      note.stopName
+    )}</span> <span class="term-no">(Stop #${escapeHtml(note.stopCode)})</span>.</p>`;
+  }
+  if (note.type === "headsign") {
+    return `<p class="tt-note">*${escapeHtml(note.lead)}<span class="note-led">${escapeHtml(note.headsign)}</span>.</p>`;
+  }
+  return "";
+}
+
+function prettyDest(dest) {
+  return String(dest || "")
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((w) => {
+      if (/^via$/i.test(w)) return "via";
+      if (/^uw$/i.test(w)) return "UW";
+      if (/^to$/i.test(w)) return "to";
+      if (/^[nsew]$/i.test(w) || /^(ne|nw|se|sw)$/i.test(w)) return w.toUpperCase();
+      return w.charAt(0).toUpperCase() + w.slice(1).toLowerCase();
+    })
+    .join(" ");
+}
+
+function prettyHeadsign(board) {
+  const parts = ledParts(board);
+  const dest = prettyDest(parts.dest);
+  if (parts.code && dest) return `${parts.code} to ${dest}`;
+  return parts.code || dest;
+}
+
+function onlyServedHtml(boards) {
+  if (!boards || !boards.length) return "";
+  const names = [...new Set(boards.map(prettyHeadsign))].filter(Boolean);
+  if (!names.length) return "";
+  const phrase = names.length === 1 ? names[0] : names.length === 2 ? `${names[0]} and ${names[1]}` : `${names.slice(0, -1).join(", ")}, and ${names[names.length - 1]}`;
+  return `<div class="only-served">(stop only served by ${escapeHtml(phrase)})</div>`;
+}
+
+function headboardHtml(board) {
+  if (!board) return "";
+  const parts = ledParts(board);
+  const led = [parts.code, parts.dest].filter(Boolean).join(" TO ");
+  return `<div class="headboard" aria-label="${escapeHtml(led)}">
+    <span class="led-code">${escapeHtml(parts.code)}</span>
+    ${parts.dest ? `<span class="led-to">TO</span><span class="led-dest">${headboardDestHtml(parts.dest)}</span>` : ""}
+  </div>`;
+}
+
+function routeBadgeHtml(code, color, ink) {
+  const name = String(code || "");
+  const size = 0.92;
+  let font = name.length > 2 ? 42 : name.length > 1 ? 56 : 72;
+  font = Math.max(11, Math.round(font * (size / 0.92)));
+  return `<div class="badge" style="background:${escapeHtml(color || "#333366")};color:${escapeHtml(ink || "#fff")};width:${size}in;height:${size}in;font-size:${font}px">${escapeHtml(name)}</div>`;
+}
+
+function normalizeLoi(rec) {
+  if (!rec) return [];
+  const raw = Array.isArray(rec)
+    ? rec
+    : Array.isArray(rec.items)
+      ? rec.items
+      : rec.label || rec.icon
+        ? [rec]
+        : [];
+  return raw
+    .map((item) => ({
+      label: String((item && item.label) || "").trim(),
+      icon: String((item && item.icon) || "").trim(),
+    }))
+    .filter((item) => item.label || item.icon);
+}
+
+function newLandmarkId(label) {
+  const slug = String(label || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-|-$/g, "")
+    .slice(0, 24);
+  return `lm-${slug || Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
+}
+
+function migrateLocations(raw, pack) {
+  const src = raw || {};
+  if (Array.isArray(src.landmarks) && src.landmarks.length) {
+    return {
+      reviewed: [...(src.reviewed || [])],
+      landmarks: src.landmarks.map((lm) => ({
+        id: lm.id || newLandmarkId(lm.label),
+        label: String(lm.label || "").trim(),
+        icon: String(lm.icon || "").trim(),
+        lat: Number(lm.lat),
+        lon: Number(lm.lon),
+        stops: [...new Set((lm.stops || []).map(String))],
+      })),
+    };
+  }
+  const landmarks = [];
+  const geo = (pack && pack.geo) || {};
+  for (const [code, rec] of Object.entries(src.stops || {})) {
+    for (const item of normalizeLoi(rec)) {
+      const label = item.label || (ICONS[item.icon] && ICONS[item.icon].label) || "";
+      const found = landmarks.find((l) => l.label === label && l.icon === item.icon);
+      if (found) {
+        if (!found.stops.includes(String(code))) found.stops.push(String(code));
+        continue;
+      }
+      const g = geo[code] || {};
+      landmarks.push({
+        id: newLandmarkId(label),
+        label,
+        icon: item.icon,
+        lat: Number(g.lat) || 0,
+        lon: Number(g.lon) || 0,
+        stops: [String(code)],
+      });
+    }
+  }
+  return { reviewed: [...(src.reviewed || [])], landmarks };
+}
+
+function loiItemsForStop(code, locations) {
+  if (!locations) return [];
+  if (Array.isArray(locations.landmarks) && locations.landmarks.length) {
+    return locations.landmarks
+      .filter((lm) => (lm.stops || []).map(String).includes(String(code)))
+      .map((lm) => ({
+        label: String(lm.label || "").trim(),
+        icon: String(lm.icon || "").trim(),
+      }))
+      .filter((item) => item.label || item.icon);
+  }
+  const map = locations.stops || locations;
+  return normalizeLoi(map[String(code)]);
+}
+
+function loiHtml(code, locations) {
+  const items = loiItemsForStop(code, locations);
+  if (!items.length) return "";
+  return `<div class="loi-list">${items
+    .map((item) => {
+      const icon = item.icon && ICONS[item.icon] ? ICONS[item.icon].svg : "";
+      return `<span class="loi">${icon}<span>${escapeHtml(item.label)}</span></span>`;
+    })
+    .join("")}</div>`;
+}
+
+function stopCell(code, geo, star) {
+  const g = geo[code] || {};
+  const name = g.n || code;
+  const mark = star ? "*" : "";
+  return `<span class="stop-name">${escapeHtml(name)}${mark}</span> <span class="stop-no">(#${escapeHtml(code)})</span>`;
+}
+
+function collapseEndNotes(rows) {
+  const out = [];
+  for (const row of rows) {
+    if (row.type !== "end") {
+      out.push(row);
+      continue;
+    }
+    const boards = row.boards || (row.board ? [row.board] : []);
+    const prev = out[out.length - 1];
+    if (prev && prev.type === "end") {
+      prev.boards.push(...boards);
+    } else {
+      out.push({ type: "end", boards: boards.slice(), at: row.at });
+    }
+  }
+  return out;
+}
+
+function rowsHtml(rows, originCode, posterRouteName, radius, pack, locations, excludeSchool) {
+  const geo = pack.geo || {};
+  const out = [];
+  let stripe = 0;
+  let lastVariant = false;
+  for (const row of collapseEndNotes(rows)) {
+    if (row.type === "end") {
+      const extra = lastVariant ? " variant" : "";
+      out.push(`<tr class="end${extra}"><td colspan="4">${endNoteHtml(row.boards || row.board, row.at, geo)}</td></tr>`);
+      continue;
+    }
+    if (row.type === "branch") {
+      lastVariant = false;
+      continue;
+    }
+    const variant = !!(row.onlyBoards && row.onlyBoards.length);
+    lastVariant = variant;
+    stripe += 1;
+    const alt = !variant && stripe % 2 === 0 ? " alt" : "";
+    const extra = variant ? " variant" : "";
+    const xfer = transfersForStop(row.code, posterRouteName, radius, pack, { excludeSchool });
+    out.push(`<tr class="data${alt}${extra}">
+      <td class="min">${formatMinutes(row.minutes)}</td>
+      <td class="sn">${stopCell(row.code, geo, row.starTerminus)}${onlyServedHtml(row.onlyBoards)}</td>
+      <td class="xf">${transfersHtml(xfer, geo)}</td>
+      <td class="lo">${loiHtml(row.code, locations)}</td>
+    </tr>`);
+  }
+  return out.join("\n");
+}
+
+function comparePosters(a, b, pack) {
+  const ra = (pack.routeByName.get(a.routeName) || {}).o || 0;
+  const rb = (pack.routeByName.get(b.routeName) || {}).o || 0;
+  if (ra !== rb) return ra - rb;
+  const schoolA = pack.routeByName.get(a.routeName)?.s ? 1 : 0;
+  const schoolB = pack.routeByName.get(b.routeName)?.s ? 1 : 0;
+  if (schoolA !== schoolB) return schoolA - schoolB;
+  if (a.routeName !== b.routeName) return compareBoardCodes(a.routeName, b.routeName);
+  if (a.heading !== b.heading) return String(a.heading).localeCompare(String(b.heading), "en");
+  const tc = compareBoardCodes(a.titleCode, b.titleCode);
+  if (tc) return tc;
+  return String(a.destLabel || "").localeCompare(String(b.destLabel || ""), "en");
+}
+
+function postersForStop(pack, stopCode, opts) {
+  const options = opts || {};
+  const radius = options.radius == null ? DEFAULT_RADIUS : Number(options.radius);
+  const excludeSchool = !!options.excludeSchool;
+  const routeNames = options.routes && options.routes.length ? [options.routes[0]] : null;
+  const want = routeNames ? new Set(routeNames.map((n) => String(n).toLowerCase())) : null;
+  const locations = options.locations || {};
+  const routeByName = routeMap(pack);
+  pack.routeByName = routeByName;
+  pack.stopRoutes = pack.stopRoutes || {};
+
+  let instances = patternsForStop(pack, stopCode);
+  if (want) instances = instances.filter((i) => want.has(String(i.r).toLowerCase()));
+  if (excludeSchool) {
+    instances = instances.filter((i) => !routeByName.get(i.r)?.s);
+  }
+  const groups = posterKeyGroups(instances, routeByName);
+  const geo = pack.geo || {};
+  const posters = [];
+  for (const g of groups) {
+    const parts = partitionPosters(g.instances);
+    const split = parts.length > 1;
+    for (const insts of parts) {
+      const merged = applyCloseTermini(mergeInstances(insts), g.routeName);
+      const rows = merged.rows;
+      if (!rows.some((r) => r.type === "stop")) continue;
+      const heading = routeHeading(stopCode, rows, geo, "");
+      const route = routeByName.get(g.routeName) || {};
+      const board = primaryBoard(insts);
+      posters.push({
+        stopCode,
+        routeName: g.routeName,
+        titleCode: g.titleCode,
+        dirId: g.dirId,
+        heading,
+        destLabel: board ? headsignLabel(board) : "",
+        primaryBoard: board,
+        showHeadboard: split,
+        color: route.c || "#333366",
+        ink: route.t || "#ffffff",
+        rows,
+        destNote: merged.destNote,
+        radius,
+        excludeSchool,
+        locations,
+      });
+    }
+  }
+  posters.sort((a, b) => comparePosters(a, b, pack));
+  const headingsByRoute = new Map();
+  for (const p of posters) {
+    if (!p.heading) continue;
+    if (!headingsByRoute.has(p.routeName)) headingsByRoute.set(p.routeName, new Set());
+    headingsByRoute.get(p.routeName).add(p.heading);
+  }
+  for (const p of posters) {
+    const set = headingsByRoute.get(p.routeName);
+    p.showHeading = !!(set && set.size > 1);
+  }
+  return posters;
+}
+
+function titleCaseHeading(heading) {
+  const raw = String(heading || "").trim();
+  if (!raw) return "";
+  return raw.charAt(0).toUpperCase() + raw.slice(1);
+}
+
+function posterKicker(poster) {
+  const code = poster.titleCode || poster.routeName || "";
+  if (poster.showHeading && poster.heading) {
+    return `Metro Transit ${titleCaseHeading(poster.heading)} Route ${code} Stop List`;
+  }
+  return `Metro Transit Route ${code} Stop List`;
+}
+
+function pdfSlugFor(poster) {
+  const bits = ["served", String(poster.titleCode || "route").toLowerCase()];
+  if (poster.showHeadboard && poster.destLabel) {
+    bits.push(
+      String(poster.destLabel)
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, "-")
+        .replace(/^-|-$/g, "")
+        .slice(0, 40)
+    );
+  }
+  bits.push(String(poster.stopCode || ""));
+  return bits.filter(Boolean).join("-").replace(/-+/g, "-");
+}
+
+function sheetHtml(poster, pack) {
+  const geo = pack.geo || {};
+  const origin = geo[poster.stopCode] || {};
+  const street = streetDirectionLabel({
+    cardinal_direction: origin.cd,
+    primary_street: origin.street,
+  });
+  const onStreet = street ? `on ${street}` : "";
+  const kicker = posterKicker(poster);
+  const name = origin.n || poster.stopCode;
+  const meta = [`Stop #${poster.stopCode}`, onStreet].filter(Boolean).join(", ");
+  const body = rowsHtml(
+    poster.rows,
+    poster.stopCode,
+    poster.routeName,
+    poster.radius,
+    pack,
+    poster.locations,
+    poster.excludeSchool
+  );
+  const board = poster.showHeadboard ? headboardHtml(poster.primaryBoard) : "";
+  const qr = mapQrHtml(poster, pack);
+  return `<section class="sheet" data-pdf-name="${escapeHtml(pdfSlugFor(poster))}" style="--route:${escapeHtml(poster.color)};--route-ink:${escapeHtml(poster.ink)}">
+    <header class="mast${qr ? " has-qr" : ""}">
+      <div class="badges">${routeBadgeHtml(poster.titleCode, poster.color, poster.ink)}</div>
+      <div class="ident">
+        <div class="kicker">${escapeHtml(kicker)}</div>
+        <h1>${escapeHtml(name)}</h1>
+        <div class="meta">${escapeHtml(meta)}</div>
+      </div>
+      ${qr}
+    </header>
+    ${board}
+    <table class="ss-table">
+      <thead>
+        <tr>
+          <th class="min">Minutes ↓<br />from here</th>
+          <th class="sn">Stop name</th>
+          <th class="xf">Transfer to Routes</th>
+          <th class="lo">Locations</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${body}
+      </tbody>
+    </table>
+    ${destNoteHtml(poster.destNote)}
+    <footer class="notes">
+      <div>
+        <div>This is a citizen-made stop list intended to improve accessibility, not an official Metro Transit bulletin. Times are trip-weighted averages from GTFS.</div>
+        <div class="source">${sourceLine(pack)}</div>
+      </div>
+    </footer>
+  </section>`;
+}
+
+function sourceLine(pack) {
+  const feed = pack.feed || {};
+  const version = feed.feed_version || feed.v || "";
+  const range =
+    feed.feed_start_date && feed.feed_end_date
+      ? `, valid ${formatDateRange(feed.feed_start_date, feed.feed_end_date)}`
+      : "";
+  return `Source: Metro Transit GTFS${version ? " " + escapeHtml(version) : ""}${escapeHtml(range)}. Please check for detours and holidays at cityofmadison.com/metro.`;
+}
+
+const POSTER_CHROME_SCRIPT = String.raw`
+(function () {
+  function inchPx() {
+    var probe = document.createElement("div");
+    probe.style.cssText = "position:absolute;left:-9999px;width:1in;height:1in";
+    document.body.appendChild(probe);
+    var inch = probe.offsetHeight || 96;
+    document.body.removeChild(probe);
+    return inch;
+  }
+  function sizeNote() {
+    var sheets = document.querySelectorAll(".sheet");
+    var el = document.getElementById("page-count");
+    if (!sheets.length || !el) return;
+    var sheet = sheets[0];
+    var inch = inchPx();
+    var h = Math.max(0.5, sheet.offsetHeight / inch);
+    var n = Math.max(1, Math.ceil(h / 11));
+    sheet.setAttribute("data-pages", String(n));
+    var text = h.toFixed(2) + " inches tall, 8.5 inches wide";
+    if (sheets.length > 1) text = sheets.length + " sheets · " + text;
+    el.textContent = text;
+  }
+  function pdfFilename() {
+    var sheet = document.querySelector(".sheet");
+    var slug = sheet && sheet.getAttribute("data-pdf-name");
+    return (slug || "served") + ".pdf";
+  }
+  function loadHtml2Canvas() {
+    if (window.html2canvas) return Promise.resolve();
+    var urls = [
+      "https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js",
+      "https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"
+    ];
+    function one(src) {
+      return new Promise(function (resolve, reject) {
+        var s = document.createElement("script");
+        s.src = src;
+        s.onload = resolve;
+        s.onerror = function () { reject(new Error("Could not load PDF helper")); };
+        document.head.appendChild(s);
+      });
+    }
+    return one(urls[0]).catch(function () { return one(urls[1]); });
+  }
+  function asciiBytes(str) {
+    var u = new Uint8Array(str.length);
+    for (var i = 0; i < str.length; i++) u[i] = str.charCodeAt(i) & 255;
+    return u;
+  }
+  function concatBytes(chunks) {
+    var n = 0, i, out, o = 0;
+    for (i = 0; i < chunks.length; i++) n += chunks[i].length;
+    out = new Uint8Array(n);
+    for (i = 0; i < chunks.length; i++) { out.set(chunks[i], o); o += chunks[i].length; }
+    return out;
+  }
+  function jpegsToPdf(pages) {
+    if (!pages || !pages.length) return new Uint8Array(0);
+    var nl = String.fromCharCode(10);
+    var pieces = [asciiBytes("%PDF-1.4" + nl + "%" + String.fromCharCode(226, 227, 207, 211) + nl)];
+    var offsets = [0];
+    var offset = pieces[0].length;
+    function addObj(body) {
+      offsets.push(offset);
+      var bytes = typeof body === "string" ? asciiBytes(body) : body;
+      pieces.push(bytes);
+      offset += bytes.length;
+    }
+    var n = pages.length;
+    var kids = [];
+    var i;
+    for (i = 0; i < n; i++) kids.push((3 + i * 3) + " 0 R");
+    addObj("1 0 obj" + nl + "<< /Type /Catalog /Pages 2 0 R >>" + nl + "endobj" + nl);
+    addObj("2 0 obj" + nl + "<< /Type /Pages /Kids [" + kids.join(" ") + "] /Count " + n + " >>" + nl + "endobj" + nl);
+    for (i = 0; i < n; i++) {
+      var pageObj = 3 + i * 3;
+      var imgObj = 4 + i * 3;
+      var contentObj = 5 + i * 3;
+      var pageW = 8.5 * 72;
+      var pageH = pageW * (pages[i].h / pages[i].w);
+      var content = "q" + nl + pageW.toFixed(2) + " 0 0 " + pageH.toFixed(2) + " 0 0 cm" + nl + "/Im0 Do" + nl + "Q" + nl;
+      addObj(
+        pageObj + " 0 obj" + nl + "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 " +
+          pageW.toFixed(2) + " " + pageH.toFixed(2) +
+          "] /Resources << /XObject << /Im0 " + imgObj + " 0 R >> >> /Contents " + contentObj + " 0 R >>" + nl + "endobj" + nl
+      );
+      addObj(concatBytes([
+        asciiBytes(
+          imgObj + " 0 obj" + nl + "<< /Type /XObject /Subtype /Image /Width " + pages[i].w +
+            " /Height " + pages[i].h +
+            " /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length " +
+            pages[i].jpeg.length + " >>" + nl + "stream" + nl
+        ),
+        pages[i].jpeg,
+        asciiBytes(nl + "endstream" + nl + "endobj" + nl)
+      ]));
+      addObj(
+        contentObj + " 0 obj" + nl + "<< /Length " + content.length + " >>" + nl + "stream" + nl + content + "endstream" + nl + "endobj" + nl
+      );
+    }
+    var xrefStart = offset;
+    var xref = "xref" + nl + "0 " + offsets.length + nl + "0000000000 65535 f " + nl;
+    for (i = 1; i < offsets.length; i++) {
+      xref += ("0000000000" + offsets[i]).slice(-10) + " 00000 n " + nl;
+    }
+    pieces.push(asciiBytes(
+      xref + "trailer" + nl + "<< /Size " + offsets.length + " /Root 1 0 R >>" + nl + "startxref" + nl + xrefStart + nl + "%%EOF" + nl
+    ));
+    return concatBytes(pieces);
+  }
+  function downloadBlob(bytes, name, type) {
+    var blob = new Blob([bytes], { type: type || "application/octet-stream" });
+    var url = URL.createObjectURL(blob);
+    var doc = document;
+    try {
+      if (window.parent && window.parent !== window) doc = window.parent.document;
+    } catch (e) {}
+    var a = doc.createElement("a");
+    a.href = url;
+    a.download = name;
+    a.rel = "noopener";
+    a.style.display = "none";
+    doc.body.appendChild(a);
+    a.click();
+    setTimeout(function () {
+      URL.revokeObjectURL(url);
+      if (a.parentNode) a.parentNode.removeChild(a);
+    }, 2000);
+  }
+  function captureSheet(sheet) {
+    var maxPx = 16384;
+    var scale = Math.min(6.25, maxPx / Math.max(1, sheet.offsetHeight), maxPx / Math.max(1, sheet.offsetWidth));
+    return window.html2canvas(sheet, {
+      scale: scale,
+      backgroundColor: "#ffffff",
+      useCORS: true,
+      logging: false,
+      scrollX: 0,
+      scrollY: 0,
+      windowWidth: sheet.scrollWidth,
+      windowHeight: sheet.scrollHeight,
+      onclone: function (doc) {
+        var clones = doc.querySelectorAll(".sheet");
+        for (var c = 0; c < clones.length; c++) {
+          clones[c].style.margin = "0";
+          clones[c].style.overflow = "hidden";
+        }
+        var chrome = doc.querySelector(".chrome");
+        if (chrome) chrome.style.display = "none";
+      }
+    }).then(function (canvas) {
+      var jpegB64 = canvas.toDataURL("image/jpeg", 0.97).split(",")[1];
+      var bin = atob(jpegB64);
+      var jpeg = new Uint8Array(bin.length);
+      for (var i = 0; i < bin.length; i++) jpeg[i] = bin.charCodeAt(i);
+      return { jpeg: jpeg, w: canvas.width, h: canvas.height };
+    });
+  }
+  function saveAsPdf() {
+    var btn = document.getElementById("download-pdf");
+    var sheets = [].slice.call(document.querySelectorAll(".sheet"));
+    if (!sheets.length) return;
+    var name = pdfFilename();
+    if (btn) {
+      btn.disabled = true;
+      btn.textContent = "Saving…";
+    }
+    var waitFonts = document.fonts && document.fonts.ready ? document.fonts.ready : Promise.resolve();
+    waitFonts
+      .then(function () { return loadHtml2Canvas(); })
+      .then(function () {
+        var chain = Promise.resolve([]);
+        sheets.forEach(function (sheet) {
+          chain = chain.then(function (pages) {
+            return captureSheet(sheet).then(function (page) {
+              pages.push(page);
+              return pages;
+            });
+          });
+        });
+        return chain;
+      })
+      .then(function (pages) {
+        downloadBlob(jpegsToPdf(pages), name, "application/pdf");
+        if (btn) btn.textContent = "Save as PDF";
+      })
+      .catch(function (err) {
+        console.error(err);
+        if (btn) btn.textContent = "Couldn’t save";
+      })
+      .then(function () {
+        if (btn) btn.disabled = false;
+      });
+  }
+  var pdfBtn = document.getElementById("download-pdf");
+  if (pdfBtn) pdfBtn.addEventListener("click", saveAsPdf);
+  sizeNote();
+  if (document.readyState !== "complete") window.addEventListener("load", sizeNote);
+  window.addEventListener("resize", sizeNote);
+})();
+`;
+
+function posterCss() {
+  return `
+    :root {
+      --ink: #111;
+      --muted: #4a4a4a;
+      --rule: #d0d0d0;
+      --paper: #fff;
+      --desk: #cfc8be;
+      --led: #f5a623;
+      --led-bg: #0c0c0c;
+      --board-size: 26px;
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; padding: 0; }
+    body {
+      background: var(--desk);
+      color: var(--ink);
+      font-family: "IBM Plex Sans", "Segoe UI", Tahoma, sans-serif;
+    }
+    body.shot { background: #fff; }
+    body.shot .chrome { display: none; }
+    body.shot .sheet { margin: 0; }
+    .chrome {
+      width: 8.5in;
+      margin: 18px auto 10px;
+      display: flex;
+      gap: 10px;
+      align-items: center;
+      flex-wrap: wrap;
+      font-size: 13px;
+    }
+    .chrome button, .chrome label {
+      background: #fff;
+      border: 1px solid #7a7a7a;
+      border-radius: 2px;
+      padding: 7px 11px;
+      font: inherit;
+      cursor: pointer;
+    }
+    .chrome .hint { color: #333; }
+    .sheet {
+      position: relative;
+      width: 8.5in;
+      margin: 0 auto 28px;
+      background: var(--paper);
+      color: var(--ink);
+      padding: 0.28in 0.34in 0.2in 0.42in;
+      display: flex;
+      flex-direction: column;
+    }
+    .sheet::before {
+      content: "";
+      position: absolute;
+      left: 0; top: 0; bottom: 0;
+      width: 0.13in;
+      background: var(--route);
+    }
+    header.mast {
+      display: grid;
+      grid-template-columns: auto 1fr;
+      gap: 12px;
+      align-items: center;
+      padding-bottom: 10px;
+      border-bottom: 3px solid var(--route);
+      margin-bottom: 10px;
+    }
+    header.mast.has-qr { grid-template-columns: auto 1fr 0.95in; }
+    .qr-block {
+      justify-self: end;
+      width: 0.95in;
+      text-align: center;
+    }
+    .qr-block a { color: inherit; text-decoration: none; display: block; }
+    .qr-block svg { width: 0.92in; height: 0.92in; display: block; margin: 0 auto; }
+    .qr-block .qr-cap {
+      font-size: 6.5px;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+      font-weight: 700;
+      margin-top: 2px;
+      line-height: 1.1;
+      color: var(--muted);
+    }
+    .badge {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 800;
+      line-height: 1;
+      letter-spacing: -0.04em;
+    }
+    .ident .kicker {
+      font-size: 11px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      font-weight: 700;
+      color: var(--route);
+      line-height: 1.25;
+    }
+    .ident h1 {
+      margin: 4px 0 3px;
+      font-size: 26px;
+      line-height: 1.05;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+    }
+    .ident .meta { font-size: 12px; color: var(--muted); }
+    .headboard {
+      background: var(--led-bg);
+      color: var(--led);
+      border: 2px solid #2b2b2b;
+      padding: 10px 14px 9px;
+      display: flex;
+      justify-content: flex-start;
+      align-items: center;
+      gap: 0.45em;
+      min-height: 2.45em;
+      max-height: 2.45em;
+      overflow: hidden;
+      margin: 0 0 10px;
+    }
+    .led-code, .led-dest {
+      font-family: "Share Tech Mono", "Consolas", monospace;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      line-height: 1;
+      font-size: var(--board-size);
+    }
+    .led-code { flex: 0 0 auto; }
+    .led-to {
+      flex: 0 0 auto;
+      font-family: "Share Tech Mono", "Consolas", monospace;
+      letter-spacing: 0.16em;
+      text-transform: uppercase;
+      line-height: 1;
+      font-size: calc(var(--board-size) * 0.5);
+      opacity: 0.85;
+      padding-top: 0.2em;
+    }
+    .led-dest {
+      flex: 1 1 auto;
+      min-width: 0;
+      text-align: left;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .led-plane { width: 0.9em; height: 0.9em; margin: 0 0.12em; vertical-align: -0.12em; }
+    .ss-table {
+      width: 100%;
+      border-collapse: collapse;
+      table-layout: fixed;
+      border: 1px solid var(--route);
+    }
+    .ss-table th {
+      font-size: 8.5px;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      text-align: left;
+      background: var(--route);
+      color: #fff;
+      border-bottom: 0;
+      border-right: 1px solid rgba(255,255,255,0.35);
+      padding: 0.06in 0.07in 0.07in;
+      vertical-align: bottom;
+    }
+    .ss-table td {
+      border-bottom: 1px solid var(--rule);
+      border-right: 1px solid var(--ink);
+      padding: 0.055in 0.07in;
+      vertical-align: top;
+      font-size: 10.5px;
+      background: #fff;
+    }
+    .ss-table tr.alt td { background: #f3f1ed; }
+    .ss-table tr.variant td {
+      background: #d4d1cb;
+      font-style: italic;
+      border-bottom-color: var(--ink);
+    }
+    .ss-table tr.end.variant td {
+      background: #d4d1cb;
+      font-style: normal;
+      border-bottom-color: var(--rule);
+    }
+    .ss-table th:last-child,
+    .ss-table td:last-child { border-right: 0; }
+    .ss-table .min { width: 0.85in; font-variant-numeric: tabular-nums; font-weight: 600; }
+    .ss-table .sn { width: 2.35in; }
+    .ss-table .xf { width: 2.2in; }
+    .ss-table .lo { width: auto; }
+    .stop-name { font-weight: 600; }
+    .stop-no { color: var(--muted); font-weight: 500; }
+    .xfer { line-height: 1.45; }
+    .xfer-cluster { white-space: nowrap; }
+    .xfer-plus {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 0.85em;
+      margin: 0 0.1em;
+      font-weight: 700;
+      font-size: 9px;
+      line-height: 1;
+      color: var(--muted);
+      vertical-align: middle;
+    }
+    .sq {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-width: 1.2em;
+      height: 1.2em;
+      padding: 0 4px;
+      margin-right: 2px;
+      font-size: 8.5px;
+      font-weight: 800;
+      line-height: 1;
+      vertical-align: middle;
+    }
+    .xfer-cluster .sq:last-of-type { margin-right: 0; }
+    .xfer-stop { font-size: 8px; color: var(--muted); }
+    .loi-list {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 2px 8px;
+    }
+    .loi {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      font-size: 9px;
+      font-weight: 600;
+      letter-spacing: 0.01em;
+      line-height: 1.25;
+      color: var(--ink);
+      font-style: normal;
+    }
+    .loi svg { width: 11px; height: 11px; flex: none; }
+    tr.end td {
+      padding: 0.07in 0.08in;
+      background: #fff;
+      font-style: normal;
+    }
+    .only-served {
+      display: block;
+      margin-top: 1px;
+      font-style: italic;
+      font-weight: 400;
+      font-size: 9px;
+      line-height: 1.3;
+      color: var(--muted);
+    }
+    .tt-note {
+      margin: 0;
+      font-size: 10.5px;
+      line-height: 1.45;
+      color: var(--muted);
+      font-weight: 500;
+      font-style: normal;
+    }
+    .sheet > .tt-note { margin: 8px 0 0; }
+    .tt-note .term-name { font-weight: 700; color: var(--ink); }
+    .tt-note .term-no { font-weight: 500; }
+    .note-led {
+      display: inline-block;
+      font-family: "Share Tech Mono", "Consolas", monospace;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      font-size: 1.05em;
+      line-height: 1;
+      background: var(--led-bg);
+      color: var(--led);
+      border: 1px solid #2b2b2b;
+      padding: 0.18em 0.4em 0.12em;
+      vertical-align: baseline;
+      font-weight: 400;
+    }
+    footer.notes {
+      margin-top: auto;
+      padding-top: 8px;
+      border-top: 1px solid var(--rule);
+      font-size: 9.5px;
+      line-height: 1.4;
+      color: var(--muted);
+    }
+    footer.notes .source { margin-top: 0.02em; }
+    @page { size: letter portrait; margin: 0; }
+    @media print {
+      html, body {
+        margin: 0;
+        padding: 0;
+        background: #fff !important;
+        width: 8.5in;
+        max-width: 8.5in;
+      }
+      * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+      body > *:not(.sheet) { display: none !important; }
+      .sheet {
+        margin: 0 !important;
+        width: 8.5in;
+        max-width: 8.5in;
+        page-break-after: always;
+      }
+    }
+  `;
+}
+
+function renderServedHtml(pack, posters, extra) {
+  const feed = pack.feed || {};
+  const stopCode = posters[0] ? posters[0].stopCode : "";
+  const name = (pack.geo && pack.geo[stopCode] && pack.geo[stopCode].n) || stopCode;
+  const sheets = posters.map((p) => sheetHtml(p, pack)).join("\n");
+  const source =
+    feed.feed_version || feed.v
+      ? `Source: Madison Metro GTFS ${escapeHtml(feed.feed_version || feed.v)}.`
+      : "Source: Madison Metro GTFS.";
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Metro Transit stop list posters · ${escapeHtml(name)} · ${escapeHtml(stopCode)}</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=Share+Tech+Mono&display=swap" rel="stylesheet" />
+  <style>${posterCss()}</style>
+</head>
+<body>
+  <div class="chrome">
+    <button type="button" onclick="window.print()">Print</button>
+    <button type="button" id="download-pdf">Save as PDF</button>
+    <span class="hint" id="page-count">Measuring size…</span>
+  </div>
+  ${sheets}
+  <!-- ${source} ${escapeHtml((extra && extra.note) || "")} -->
+  <script>
+${POSTER_CHROME_SCRIPT}
+  </script>
+</body>
+</html>`;
+}
+
+function generateServedHtml(pack, stopCode, opts) {
+  ensureMapQr(pack);
+  const posters = postersForStop(pack, stopCode, opts);
+  if (!posters.length) {
+    throw new Error(`No remaining stops from ${stopCode} for the selected route.`);
+  }
+  return { html: renderServedHtml(pack, posters, opts), posters };
+}
+
+function uniqueStopsForRoute(pack, routeName, dirId) {
+  const seqs = [];
+  for (const p of pack.patterns || []) {
+    if (String(p.r) !== String(routeName)) continue;
+    if (dirId != null && String(p.d) !== String(dirId)) continue;
+    seqs.push(p.s || []);
+  }
+  const dummy = seqs.map((s) => ({
+    board: { code: routeName, dest: "" },
+    trips: 1,
+    remaining: s.slice(),
+    minutes: s.map(() => 0),
+  }));
+  if (!dummy.length) return [];
+  const rows = mergeInstances(dummy);
+  const out = [];
+  const seen = new Set();
+  for (const row of rows) {
+    if (row.type !== "stop") continue;
+    if (seen.has(row.code)) continue;
+    seen.add(row.code);
+    out.push(row.code);
+  }
+  return out;
+}
+
+function directionsForRoute(pack, routeName) {
+  const dirs = new Set();
+  for (const p of pack.patterns || []) {
+    if (String(p.r) === String(routeName)) dirs.add(String(p.d));
+  }
+  return [...dirs].sort();
+}
+
+function headingForRouteDir(pack, routeName, dirId) {
+  let best = null;
+  for (const p of pack.patterns || []) {
+    if (String(p.r) !== String(routeName)) continue;
+    if (dirId != null && String(p.d) !== String(dirId)) continue;
+    if (!best || p.n > best.n || (p.n === best.n && (p.s || []).length > (best.s || []).length)) {
+      best = p;
+    }
+  }
+  const fallback = dirId == null ? "" : `Direction ${dirId}`;
+  if (!best || !(best.s || []).length) return { heading: fallback, dest: "" };
+  const geo = pack.geo || {};
+  const origin = geo[best.s[0]];
+  const end = geo[best.s[best.s.length - 1]];
+  let heading = fallback;
+  if (origin && end && distM(origin, end) >= 120) {
+    heading = headingWordFromBearing(bearingDeg(origin, end));
+  } else if (origin) {
+    for (const code of best.s.slice(1)) {
+      const g = geo[code];
+      if (!g || distM(origin, g) < 120) continue;
+      heading = headingWordFromBearing(bearingDeg(origin, g));
+      break;
+    }
+  }
+  return { heading, dest: best.e || "" };
+}
+
+function routeDirLabel(pack, routeName, dirId) {
+  const info = headingForRouteDir(pack, routeName, dirId);
+  const head = titleCaseHeading(info.heading);
+  const to = prettyDest(info.dest);
+  if (head && to) return `${head} to ${to}`;
+  return head || to || `Direction ${dirId}`;
+}
+
+const api = {
+  DEFAULT_RADIUS,
+  ICONS,
+  qrBits,
+  routeMapUrl,
+  escapeHtml,
+  streetDirectionLabel,
+  formatHeadboard,
+  boardParts,
+  compareBoardCodes,
+  distM,
+  metersToFeet,
+  transferGroups,
+  bearingDeg,
+  headingWordFromBearing,
+  patternsForStop,
+  postersForStop,
+  generateServedHtml,
+  uniqueStopsForRoute,
+  directionsForRoute,
+  headingForRouteDir,
+  routeDirLabel,
+  prettyDest,
+  normalizeLoi,
+  newLandmarkId,
+  migrateLocations,
+  loiItemsForStop,
+  transfersForStop,
+  headsignLabel,
+};
+
+if (typeof module !== "undefined" && module.exports) {
+  module.exports = api;
+}
+if (typeof window !== "undefined") {
+  window.MMTServed = api;
+}

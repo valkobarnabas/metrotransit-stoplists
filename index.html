@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Metro Transit stop list posters</title>
+  <link rel="icon" type="image/png" href="data/metrologo-mark.png" />
+  <link rel="shortcut icon" type="image/png" href="data/metrologo-mark.png" />
+  <link rel="apple-touch-icon" href="data/metrologo-mark.png" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <main class="box">
+    <h1>Metro Transit stop list posters</h1>
+    <p class="lead">Poster of every stop a route still serves after yours — one route at a time. <a href="curate.html">Label locations of interest</a>.</p>
+    <label class="check" id="sync-wrap">
+      <input type="checkbox" id="use-curate" />
+      Use locations from the curator in this browser
+    </label>
+    <p class="picked-meta" id="curate-status"></p>
+
+    <label class="field">
+      <span>Stop</span>
+      <input id="q" type="search" autocomplete="off" placeholder="0716 or University at Orchard" />
+    </label>
+    <div id="results" class="results" hidden></div>
+
+    <section id="picked" class="picked" hidden>
+      <div class="picked-name" id="picked-name"></div>
+      <div class="picked-meta" id="picked-meta"></div>
+
+      <div class="row">
+        <label class="check"><input type="checkbox" id="noschool" checked /> Exclude school extras</label>
+      </div>
+      <div id="routes" class="routes"></div>
+
+      <button type="button" id="go">Generate poster</button>
+    </section>
+    <p id="err" class="err" hidden></p>
+  </main>
+
+  <section id="out" class="out" hidden>
+    <div class="out-bar">
+      <button type="button" id="open">Open HTML in new tab</button>
+      <button type="button" id="save">Download HTML</button>
+    </div>
+    <iframe id="preview" title="Poster preview"></iframe>
+  </section>
+
+  <script src="served.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

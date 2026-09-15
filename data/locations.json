@@ -1,0 +1,108 @@
+{
+  "reviewed": [
+    "F"
+  ],
+  "landmarks": [
+    {
+      "id": "lm-marshall-park",
+      "label": "Marshall Park",
+      "icon": "park",
+      "lat": 43.094023,
+      "lon": -89.485488,
+      "stops": [
+        "6171"
+      ]
+    },
+    {
+      "id": "lm-metro-market",
+      "label": "Metro Market",
+      "icon": "grocery",
+      "lat": 43.065348,
+      "lon": -89.52585,
+      "stops": [
+        "6368"
+      ]
+    },
+    {
+      "id": "lm-city-center-west",
+      "label": "City Center West",
+      "icon": "shopping",
+      "lat": 43.07149,
+      "lon": -89.525192,
+      "stops": [
+        "6430"
+      ]
+    },
+    {
+      "id": "lm-uw-health",
+      "label": "UW Health",
+      "icon": "hospital",
+      "lat": 43.069288,
+      "lon": -89.524954,
+      "stops": [
+        "6818"
+      ]
+    },
+    {
+      "id": "lm-hospital",
+      "label": "Hospital",
+      "icon": "hospital",
+      "lat": 43.15358,
+      "lon": -89.316061,
+      "stops": [
+        "9081"
+      ]
+    },
+    {
+      "id": "lm-hilldale",
+      "label": "Hilldale",
+      "icon": "shopping",
+      "lat": 43.075359,
+      "lon": -89.451633,
+      "stops": [
+        "10049"
+      ]
+    },
+    {
+      "id": "lm-uw-hospital",
+      "label": "UW Hospital",
+      "icon": "hospital",
+      "lat": 43.073472,
+      "lon": -89.433609,
+      "stops": [
+        "10057"
+      ]
+    },
+    {
+      "id": "lm-uw-madison",
+      "label": "UW-Madison",
+      "icon": "university",
+      "lat": 43.073454,
+      "lon": -89.407179,
+      "stops": [
+        "10061",
+        "10069"
+      ]
+    },
+    {
+      "id": "lm-state-street",
+      "label": "State Street",
+      "icon": "landmark",
+      "lat": 43.07491,
+      "lon": -89.391488,
+      "stops": [
+        "10077"
+      ]
+    },
+    {
+      "id": "lm-state-capitol",
+      "label": "State Capitol",
+      "icon": "capitol",
+      "lat": 43.075741,
+      "lon": -89.385056,
+      "stops": [
+        "10081"
+      ]
+    }
+  ]
+}
