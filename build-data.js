@@ -124,7 +124,9 @@ function main() {
     const route = routeList.find((r) => r.n === p.r);
     const pill = route ? { n: route.n, c: route.c, t: route.t, s: route.s } : { n: p.r, c: "#333366", t: "#FFFFFF" };
     const seen = new Set();
-    for (const code of p.s) {
+    const seq = p.s;
+    for (let i = 0; i < seq.length - 1; i++) {
+      const code = seq[i];
       if (seen.has(code)) continue;
       seen.add(code);
       if (!stopRoutes[code]) stopRoutes[code] = [];

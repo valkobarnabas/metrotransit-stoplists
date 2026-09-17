@@ -11,12 +11,6 @@ Unofficial printable “stops from here” stop list posters for [Madison Metro 
 
 Print from the poster page: Letter, actual size, no headers or footers.
 
-## Locations of interest
-
-[curate.html](curate.html) is a map of every stop. Click to drop a landmark, name it, pick an icon, then click the stops that should show it (or right-click and drag from the pin to box-select). Click the map to deselect before placing another.
-
-The map uses [Leaflet](https://leafletjs.com/) and free [OpenStreetMap](https://www.openstreetmap.org/copyright) tiles.
-
 ## GitHub Pages
 
 This folder is a site root of its own. Put these files at the repository root (or in `/docs`) and enable Pages. Include `data/served.json.gz`, `data/locations.json`, and `data/metrologo-mark.png`. `.nojekyll` is already here. `data/pack.json.gz` is unused by this site and can be omitted.

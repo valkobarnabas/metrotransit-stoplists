@@ -5,8 +5,7 @@
 const DEFAULT_RADIUS = 250;
 const FT_PER_M = 3.280839895;
 const FORK_LONG = 4;
-const ROUTE_MAP_URL =
-  "https://www.cityofmadison.com/sites/default/files/metro/images/maps/route-maps/{route}.png";
+const ROUTE_INFO_URL = "https://www.cityofmadison.com/metro/routes-schedules/route-{route}";
 
 /** Same close-terminus pairs as github/: one * footnote, not variant rows. */
 const CLOSE_TERMINUS_PAIRS = [
@@ -32,6 +31,12 @@ const CLOSE_TERMINUS_PAIRS = [
       stopCode: "10004",
     },
   },
+];
+
+/** Rare alternate Hughes at S Park: keep the usual last stop, drop the thin one. */
+const IGNORE_ALT_TERMINI = [
+  { route: "G", keepCode: "0194", dropCode: "0321" },
+  { route: "H", keepCode: "0321", dropCode: "0194" },
 ];
 
 function qrLib() {
@@ -134,7 +139,7 @@ function routeMapCode(poster, pack) {
 
 function routeMapUrl(code) {
   if (!code) return "";
-  return ROUTE_MAP_URL.replace("{route}", encodeURIComponent(code));
+  return ROUTE_INFO_URL.replace("{route}", encodeURIComponent(String(code).toLowerCase()));
 }
 
 function mapQrHtml(poster, pack) {
@@ -145,9 +150,9 @@ function mapQrHtml(poster, pack) {
   const svg = qrSvgFromBits(bits);
   if (!svg) return "";
   return `<div class="qr-block">
-    <a href="${escapeHtml(url)}" target="_blank" rel="noopener" title="Map of Route ${escapeHtml(code)}">
+    <a href="${escapeHtml(url)}" target="_blank" rel="noopener" title="Route ${escapeHtml(code)} info">
       ${svg}
-      <div class="qr-cap">Map of<br />Route</div>
+      <div class="qr-cap">Route<br />Info</div>
     </a>
   </div>`;
 }
@@ -603,6 +608,27 @@ function applyCloseTermini(rows, routeName) {
   return { rows: cleaned, destNote: rule.destNote };
 }
 
+function applyIgnoredTermini(result, routeName) {
+  const route = String(routeName || "").toUpperCase();
+  const codes = new Set();
+  for (const row of result.rows || []) {
+    if (row.type === "stop") codes.add(String(row.code));
+  }
+  let rows = result.rows;
+  for (const rule of IGNORE_ALT_TERMINI) {
+    if (route !== rule.route) continue;
+    if (!codes.has(rule.dropCode) || !codes.has(rule.keepCode)) continue;
+    rows = rows
+      .filter((row) => {
+        if (row.type === "stop" && row.code === rule.dropCode) return false;
+        if (row.type === "end" && row.at === rule.dropCode) return false;
+        return true;
+      })
+      .map((row) => (row.type === "stop" && row.code === rule.keepCode ? { ...row, onlyBoards: null } : row));
+  }
+  return { ...result, rows };
+}
+
 function mergeInstances(instances) {
   const items = instances.map((inst) => ({
     board: inst.board,
@@ -635,7 +661,12 @@ function mergeInstances(instances) {
               trips: groupItems.reduce((s, i) => s + i.trips, 0),
             };
           })
-          .sort((a, b) => b.trips - a.trips);
+          .sort((a, b) => {
+            const remainA = Math.max(...a.items.map((i) => i.seq.length));
+            const remainB = Math.max(...b.items.map((i) => i.seq.length));
+            if (remainA !== remainB) return remainA - remainB;
+            return b.trips - a.trips;
+          });
         for (const g of groups) {
           const ex = exclusiveStopCount(g, groups.filter((x) => x !== g));
           const tag = ex > 0 && ex <= FORK_LONG ? uniqueBoards(g.items) : null;
@@ -681,14 +712,44 @@ function sameRouteName(a, b) {
   return String(a || "").toLowerCase() === String(b || "").toLowerCase();
 }
 
+const departingByStop = new WeakMap();
+
+function departingRoutesAt(pack, stopCode) {
+  let idx = departingByStop.get(pack);
+  if (!idx) {
+    idx = new Map();
+    for (const p of pack.patterns || []) {
+      const name = String(p.r || "").toLowerCase();
+      const seq = p.s || [];
+      for (let i = 0; i < seq.length - 1; i++) {
+        let set = idx.get(seq[i]);
+        if (!set) {
+          set = new Set();
+          idx.set(seq[i], set);
+        }
+        set.add(name);
+      }
+    }
+    departingByStop.set(pack, idx);
+  }
+  return idx.get(stopCode) || new Set();
+}
+
+function routeDepartsFrom(pack, routeName, stopCode) {
+  return departingRoutesAt(pack, stopCode).has(String(routeName || "").toLowerCase());
+}
+
 function transfersForStop(stopCode, posterRouteName, radius, pack, opts) {
   const excludeSchool = !!(opts && opts.excludeSchool);
   const geo = pack.geo || {};
   const stopRoutes = pack.stopRoutes || {};
   const origin = geo[stopCode];
   const here = stopRoutes[stopCode] || [];
-  const keep = (r) => !sameRouteName(r.n, posterRouteName) && !(excludeSchool && r.s);
-  const same = here.filter(keep);
+  const keep = (r, at) =>
+    !sameRouteName(r.n, posterRouteName) &&
+    !(excludeSchool && r.s) &&
+    routeDepartsFrom(pack, r.n, at);
+  const same = here.filter((r) => keep(r, stopCode));
   const nearby = [];
   if (origin && radius > 0) {
     for (const [code, g] of Object.entries(geo)) {
@@ -696,8 +757,8 @@ function transfersForStop(stopCode, posterRouteName, radius, pack, opts) {
       const d = distM(origin, g);
       if (metersToFeet(d) > radius) continue;
       for (const r of stopRoutes[code] || []) {
-        if (!keep(r)) continue;
-        if (here.some((x) => sameRouteName(x.n, r.n))) continue;
+        if (!keep(r, code)) continue;
+        if (routeDepartsFrom(pack, r.n, stopCode)) continue;
         nearby.push({ r, code, d });
       }
     }
@@ -747,7 +808,7 @@ function groupHtml(group) {
   const squares = group.routes.map(squareHtml).join("");
   if (!group.code) return `<span class="xfer-cluster">${squares}</span>`;
   const feet = roundFeetUp10(group.d);
-  return `<span class="xfer-cluster">${squares}<span class="xfer-stop"> (#${escapeHtml(group.code)}, ${feet} ft. away)</span></span>`;
+  return `<span class="xfer-cluster">${squares}<span class="xfer-stop"> (${feet} ft. away)</span></span>`;
 }
 
 function transfersHtml(xfer, geo) {
@@ -981,9 +1042,16 @@ function rowsHtml(rows, originCode, posterRouteName, radius, pack, locations, ex
   const out = [];
   let stripe = 0;
   let lastVariant = false;
+  let mainN = 0;
+  let extraN = 0;
+  let pendingExtra = false;
   for (const row of collapseEndNotes(rows)) {
     if (row.type === "end") {
       const extra = lastVariant ? " variant" : "";
+      if (lastVariant) {
+        pendingExtra = false;
+        extraN = 0;
+      }
       out.push(`<tr class="end${extra}"><td colspan="4">${endNoteHtml(row.boards || row.board, row.at, geo)}</td></tr>`);
       continue;
     }
@@ -994,14 +1062,23 @@ function rowsHtml(rows, originCode, posterRouteName, radius, pack, locations, ex
     const variant = !!(row.onlyBoards && row.onlyBoards.length);
     lastVariant = variant;
     stripe += 1;
+    let idx;
+    if (variant) {
+      extraN += 1;
+      pendingExtra = true;
+      idx = `(${mainN + extraN})`;
+    } else {
+      mainN += 1;
+      idx = pendingExtra && extraN ? `${mainN} (${mainN + extraN})` : String(mainN);
+    }
     const alt = !variant && stripe % 2 === 0 ? " alt" : "";
     const extra = variant ? " variant" : "";
     const xfer = transfersForStop(row.code, posterRouteName, radius, pack, { excludeSchool });
     out.push(`<tr class="data${alt}${extra}">
+      <td class="idx">${idx}</td>
       <td class="min">${formatMinutes(row.minutes)}</td>
       <td class="sn">${stopCell(row.code, geo, row.starTerminus)}${onlyServedHtml(row.onlyBoards)}</td>
       <td class="xf">${transfersHtml(xfer, geo)}</td>
-      <td class="lo">${loiHtml(row.code, locations)}</td>
     </tr>`);
   }
   return out.join("\n");
@@ -1044,7 +1121,7 @@ function postersForStop(pack, stopCode, opts) {
     const parts = partitionPosters(g.instances);
     const split = parts.length > 1;
     for (const insts of parts) {
-      const merged = applyCloseTermini(mergeInstances(insts), g.routeName);
+      const merged = applyIgnoredTermini(applyCloseTermini(mergeInstances(insts), g.routeName), g.routeName);
       const rows = merged.rows;
       if (!rows.some((r) => r.type === "stop")) continue;
       const heading = routeHeading(stopCode, rows, geo, "");
@@ -1144,14 +1221,23 @@ function sheetHtml(poster, pack) {
       </div>
       ${qr}
     </header>
+    <div class="next-stops" aria-hidden="true">
+      <span class="ns-line"></span>
+      <span class="ns-mark">
+        <svg viewBox="0 0 10 7" aria-hidden="true"><path d="M0 0h10L5 7z"/></svg>
+        Next Stops
+        <svg viewBox="0 0 10 7" aria-hidden="true"><path d="M0 0h10L5 7z"/></svg>
+      </span>
+      <span class="ns-line"></span>
+    </div>
     ${board}
     <table class="ss-table">
       <thead>
         <tr>
+          <th class="idx">Stops ↓<br />from here</th>
           <th class="min">Minutes ↓<br />from here</th>
           <th class="sn">Stop name</th>
           <th class="xf">Transfer to Routes</th>
-          <th class="lo">Locations</th>
         </tr>
       </thead>
       <tbody>
@@ -1161,7 +1247,7 @@ function sheetHtml(poster, pack) {
     ${destNoteHtml(poster.destNote)}
     <footer class="notes">
       <div>
-        <div>This is a citizen-made stop list intended to improve accessibility, not an official Metro Transit bulletin. Times are trip-weighted averages from GTFS.</div>
+        <div>This is a citizen-made stop list intended to improve accessibility, not an official Metro Transit bulletin. Times are trip-weighted averages from GTFS data.</div>
         <div class="source">${sourceLine(pack)}</div>
       </div>
     </footer>
@@ -1444,8 +1530,7 @@ function posterCss() {
       gap: 12px;
       align-items: center;
       padding-bottom: 10px;
-      border-bottom: 3px solid var(--route);
-      margin-bottom: 10px;
+      margin-bottom: 0;
     }
     header.mast.has-qr { grid-template-columns: auto 1fr 0.95in; }
     .qr-block {
@@ -1529,6 +1614,36 @@ function posterCss() {
       text-overflow: ellipsis;
     }
     .led-plane { width: 0.9em; height: 0.9em; margin: 0 0.12em; vertical-align: -0.12em; }
+    .next-stops {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin: 0 0 10px;
+      color: var(--route);
+    }
+    .next-stops .ns-line {
+      flex: 1 1 auto;
+      height: 0;
+      border-top: 3px solid var(--route);
+    }
+    .next-stops .ns-mark {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      flex: 0 0 auto;
+      font-size: 8px;
+      font-weight: 700;
+      letter-spacing: 0.16em;
+      text-transform: uppercase;
+      white-space: nowrap;
+      line-height: 1;
+    }
+    .next-stops svg {
+      width: 8px;
+      height: 6px;
+      fill: currentColor;
+      display: block;
+    }
     .ss-table {
       width: 100%;
       border-collapse: collapse;
@@ -1554,14 +1669,15 @@ function posterCss() {
       padding: 0.055in 0.07in;
       vertical-align: top;
       font-size: 10.5px;
+      line-height: 1.25;
       background: #fff;
     }
     .ss-table tr.alt td { background: #f3f1ed; }
     .ss-table tr.variant td {
       background: #d4d1cb;
-      font-style: italic;
       border-bottom-color: var(--ink);
     }
+    .ss-table tr.variant td.sn { font-style: italic; }
     .ss-table tr.end.variant td {
       background: #d4d1cb;
       font-style: normal;
@@ -1569,13 +1685,13 @@ function posterCss() {
     }
     .ss-table th:last-child,
     .ss-table td:last-child { border-right: 0; }
+    .ss-table .idx { width: 0.72in; font-variant-numeric: tabular-nums; font-weight: 600; white-space: nowrap; }
     .ss-table .min { width: 0.85in; font-variant-numeric: tabular-nums; font-weight: 600; }
-    .ss-table .sn { width: 2.35in; }
-    .ss-table .xf { width: 2.2in; }
-    .ss-table .lo { width: auto; }
+    .ss-table .sn { width: 2.55in; }
+    .ss-table .xf { width: auto; }
     .stop-name { font-weight: 600; }
     .stop-no { color: var(--muted); font-weight: 500; }
-    .xfer { line-height: 1.45; }
+    .xfer { line-height: inherit; }
     .xfer-cluster { white-space: nowrap; }
     .xfer-plus {
       display: inline-flex;
@@ -1593,14 +1709,16 @@ function posterCss() {
       display: inline-flex;
       align-items: center;
       justify-content: center;
-      min-width: 1.2em;
+      width: 1.5em;
       height: 1.2em;
-      padding: 0 4px;
+      min-width: 1.5em;
+      padding: 0;
       margin-right: 2px;
-      font-size: 8.5px;
+      font-size: 10.5px;
       font-weight: 800;
       line-height: 1;
       vertical-align: middle;
+      box-sizing: border-box;
     }
     .xfer-cluster .sq:last-of-type { margin-right: 0; }
     .xfer-stop { font-size: 8px; color: var(--muted); }
