@@ -1145,13 +1145,11 @@ function rowsHtml(rows, originCode, posterRouteName, radius, pack, locations, ex
     }
     const alt = !variant && stripe % 2 === 0 ? " alt" : "";
     const extra = variant ? variantClass() : "";
-    const xfer = transfersForStops(
-      row.xferCodes || [row.code],
-      posterRouteName,
-      radius,
-      pack,
-      { excludeSchool }
-    );
+    const xferCodes = row.xferCodes || [row.code];
+    const xfer =
+      xferCodes.length > 1
+        ? transfersForStops(xferCodes, posterRouteName, radius, pack, { excludeSchool })
+        : transfersForStop(xferCodes[0], posterRouteName, radius, pack, { excludeSchool });
     const names = (row.alsoCodes && row.alsoCodes.length ? row.alsoCodes : [row.code])
       .map((code) => stopCell(code, geo, row.starTerminus && code === row.code))
       .join(" or<br />");
