@@ -7,29 +7,19 @@ const FT_PER_M = 3.280839895;
 const FORK_LONG = 4;
 const ROUTE_INFO_URL = "https://www.cityofmadison.com/metro/routes-schedules/route-{route}";
 
-/** Same close-terminus pairs as github/: one * footnote, not variant rows. */
+/** Nearby day/evening last stops: one combined last row, one terminate note. */
 const CLOSE_TERMINUS_PAIRS = [
   {
     route: "C",
     dayCode: "2091",
     eveningCode: "2916",
-    destNote: {
-      type: "terminus",
-      lead: "Trips on weekdays after 7pm and on weekends terminate at southbound ",
-      stopName: "Highland at Observatory",
-      stopCode: "2916",
-    },
+    eveningWhen: "on weekdays after 7pm and on weekends",
   },
   {
     route: "F",
     dayCode: "10001",
     eveningCode: "10004",
-    destNote: {
-      type: "terminus",
-      lead: "Trips on weekdays after 8pm and on weekends terminate at ",
-      stopName: "Junction at Park And Ride",
-      stopCode: "10004",
-    },
+    eveningWhen: "on weekdays after 8pm and on weekends",
   },
 ];
 
@@ -152,7 +142,7 @@ function mapQrHtml(poster, pack) {
   return `<div class="qr-block">
     <a href="${escapeHtml(url)}" target="_blank" rel="noopener" title="Route ${escapeHtml(code)} info">
       ${svg}
-      <div class="qr-cap">Route<br />Info</div>
+      <div class="qr-cap">Route Info<br />and detours</div>
     </a>
   </div>`;
 }
@@ -306,7 +296,7 @@ function roundMinutes(n) {
 }
 
 function formatMinutes(n) {
-  const m = roundMinutes(n);
+  const m = Math.max(1, roundMinutes(n));
   return `${m} min.`;
 }
 
@@ -576,6 +566,27 @@ function matchingCloseTerminus(routeName, rows) {
   return null;
 }
 
+function collectEndBoards(rows, codes) {
+  const want = new Set(codes.map(String));
+  const boards = [];
+  const seen = new Set();
+  for (const row of rows || []) {
+    const list =
+      row.type === "end" && want.has(String(row.at))
+        ? row.boards || (row.board ? [row.board] : [])
+        : row.type === "stop" && want.has(String(row.code))
+          ? row.onlyBoards || []
+          : [];
+    for (const board of list) {
+      const key = headsignLabel(board);
+      if (!key || seen.has(key)) continue;
+      seen.add(key);
+      boards.push(board);
+    }
+  }
+  return boards;
+}
+
 function applyCloseTermini(rows, routeName) {
   const rule = matchingCloseTerminus(routeName, rows);
   if (!rule) return { rows, destNote: null };
@@ -589,6 +600,7 @@ function applyCloseTermini(rows, routeName) {
     num += (Number(row.minutes) || 0) * trips;
     den += trips;
   }
+  const boards = collectEndBoards(rows, [rule.dayCode, rule.eveningCode]);
   const cleaned = [];
   for (const row of rows) {
     if (row.type === "end" && (row.at === rule.dayCode || row.at === rule.eveningCode)) continue;
@@ -597,7 +609,9 @@ function applyCloseTermini(rows, routeName) {
       cleaned.push({
         ...row,
         onlyBoards: null,
-        starTerminus: true,
+        starTerminus: false,
+        alsoCodes: [rule.dayCode, rule.eveningCode],
+        xferCodes: [rule.dayCode, rule.eveningCode],
         minutes: den ? num / den : row.minutes,
         trips: den || row.trips,
       });
@@ -605,7 +619,16 @@ function applyCloseTermini(rows, routeName) {
     }
     cleaned.push(row);
   }
-  return { rows: cleaned, destNote: rule.destNote };
+  cleaned.push({
+    type: "end",
+    kind: "closeTerminus",
+    boards,
+    at: rule.dayCode,
+    dayCode: rule.dayCode,
+    eveningCode: rule.eveningCode,
+    eveningWhen: rule.eveningWhen,
+  });
+  return { rows: cleaned, destNote: null };
 }
 
 function applyIgnoredTermini(result, routeName) {
@@ -817,6 +840,19 @@ function transfersHtml(xfer, geo) {
   return `<span class="xfer">${groups.map((g) => groupHtml(g)).join('<span class="xfer-plus">+</span>')}</span>`;
 }
 
+function transfersForStops(codes, posterRouteName, radius, pack, opts) {
+  const byName = new Map();
+  for (const code of codes || []) {
+    const xfer = transfersForStop(code, posterRouteName, radius, pack, opts);
+    for (const r of xfer.same) byName.set(r.n, r);
+    for (const x of xfer.others) {
+      if (!byName.has(x.r.n)) byName.set(x.r.n, x.r);
+    }
+  }
+  const same = [...byName.values()].sort((a, b) => compareBoardCodes(a.n, b.n));
+  return { same, others: [] };
+}
+
 function ledParts(board) {
   const code = String((board && board.code) || "").trim();
   let dest = String((board && board.dest) || "")
@@ -854,8 +890,27 @@ function joinNoteLeds(boards) {
   return `${chips.slice(0, -1).join(", ")}, and ${chips[chips.length - 1]}`;
 }
 
-function endNoteHtml(boards, atCode, geo) {
-  const list = (Array.isArray(boards) ? boards : [boards]).filter(Boolean);
+function stopPhrase(code, geo) {
+  const g = (geo && code && geo[code]) || {};
+  return `<span class="term-name">${escapeHtml(g.n || code)}</span>`;
+}
+
+function closeTerminusNoteHtml(row, geo) {
+  const led = joinNoteLeds(row.boards || []);
+  const signed = led ? `Trips signed ${led}` : "Trips";
+  const a = geo && geo[row.dayCode];
+  const b = geo && geo[row.eveningCode];
+  const feet = a && b ? roundFeetUp10(distM(a, b)) : null;
+  const apart = feet ? ` The two stops are ${feet} feet away from each other.` : "";
+  return `<p class="tt-note">${signed} terminate at ${stopPhrase(row.eveningCode, geo)} ${escapeHtml(
+    row.eveningWhen || "on evenings and weekends"
+  )}, and ${stopPhrase(row.dayCode, geo)} otherwise.${apart}</p>`;
+}
+
+function endNoteHtml(row, geo) {
+  if (row && row.kind === "closeTerminus") return closeTerminusNoteHtml(row, geo);
+  const list = ((row && (row.boards || (row.board ? [row.board] : []))) || []).filter(Boolean);
+  const atCode = row && row.at;
   const g = (geo && atCode && geo[atCode]) || {};
   const where = g.n || atCode || "the last stop listed above";
   return `<p class="tt-note">Trips signed ${joinNoteLeds(list)} terminate at <span class="term-name">${escapeHtml(where)}</span>.</p>`;
@@ -1028,10 +1083,10 @@ function collapseEndNotes(rows) {
     }
     const boards = row.boards || (row.board ? [row.board] : []);
     const prev = out[out.length - 1];
-    if (prev && prev.type === "end") {
+    if (prev && prev.type === "end" && !prev.kind && !row.kind) {
       prev.boards.push(...boards);
     } else {
-      out.push({ type: "end", boards: boards.slice(), at: row.at });
+      out.push({ ...row, boards: boards.slice() });
     }
   }
   return out;
@@ -1042,24 +1097,41 @@ function rowsHtml(rows, originCode, posterRouteName, radius, pack, locations, ex
   const out = [];
   let stripe = 0;
   let lastVariant = false;
+  let variantGroup = 0;
+  let openVariant = false;
   let mainN = 0;
   let extraN = 0;
   let pendingExtra = false;
+  function variantClass() {
+    if (!lastVariant && !openVariant) return "";
+    const alt = variantGroup > 0 && variantGroup % 2 === 0;
+    return alt ? " variant variant-alt" : " variant";
+  }
   for (const row of collapseEndNotes(rows)) {
     if (row.type === "end") {
-      const extra = lastVariant ? " variant" : "";
+      const extra = lastVariant ? variantClass() : "";
       if (lastVariant) {
         pendingExtra = false;
         extraN = 0;
+        openVariant = false;
       }
-      out.push(`<tr class="end${extra}"><td colspan="4">${endNoteHtml(row.boards || row.board, row.at, geo)}</td></tr>`);
+      out.push(`<tr class="end${extra}"><td colspan="4">${endNoteHtml(row, geo)}</td></tr>`);
       continue;
     }
     if (row.type === "branch") {
       lastVariant = false;
+      openVariant = false;
+      variantGroup = 0;
       continue;
     }
     const variant = !!(row.onlyBoards && row.onlyBoards.length);
+    if (variant) {
+      if (!openVariant) variantGroup += 1;
+      openVariant = true;
+    } else {
+      openVariant = false;
+      variantGroup = 0;
+    }
     lastVariant = variant;
     stripe += 1;
     let idx;
@@ -1072,12 +1144,21 @@ function rowsHtml(rows, originCode, posterRouteName, radius, pack, locations, ex
       idx = pendingExtra && extraN ? `${mainN} (${mainN + extraN})` : String(mainN);
     }
     const alt = !variant && stripe % 2 === 0 ? " alt" : "";
-    const extra = variant ? " variant" : "";
-    const xfer = transfersForStop(row.code, posterRouteName, radius, pack, { excludeSchool });
+    const extra = variant ? variantClass() : "";
+    const xfer = transfersForStops(
+      row.xferCodes || [row.code],
+      posterRouteName,
+      radius,
+      pack,
+      { excludeSchool }
+    );
+    const names = (row.alsoCodes && row.alsoCodes.length ? row.alsoCodes : [row.code])
+      .map((code) => stopCell(code, geo, row.starTerminus && code === row.code))
+      .join(" or<br />");
     out.push(`<tr class="data${alt}${extra}">
       <td class="idx">${idx}</td>
       <td class="min">${formatMinutes(row.minutes)}</td>
-      <td class="sn">${stopCell(row.code, geo, row.starTerminus)}${onlyServedHtml(row.onlyBoards)}</td>
+      <td class="sn">${names}${onlyServedHtml(row.onlyBoards)}</td>
       <td class="xf">${transfersHtml(xfer, geo)}</td>
     </tr>`);
   }
@@ -1678,11 +1759,13 @@ function posterCss() {
       border-bottom-color: var(--ink);
     }
     .ss-table tr.variant td.sn { font-style: italic; }
+    .ss-table tr.variant-alt td { background: #fff; }
     .ss-table tr.end.variant td {
       background: #d4d1cb;
       font-style: normal;
       border-bottom-color: var(--rule);
     }
+    .ss-table tr.end.variant-alt td { background: #fff; }
     .ss-table th:last-child,
     .ss-table td:last-child { border-right: 0; }
     .ss-table .idx { width: 0.72in; font-variant-numeric: tabular-nums; font-weight: 600; white-space: nowrap; }
