@@ -1326,7 +1326,7 @@ function sheetHtml(poster, pack) {
     ${destNoteHtml(poster.destNote)}
     <footer class="notes">
       <div>
-        <div>This is a citizen-made stop list intended to improve accessibility, not an official Metro Transit bulletin. Times are trip-weighted averages.</div>
+        <div>This is a citizen-made stop list intended to improve accessibility, not an official Metro Transit bulletin. Times are trip-weighted averages from GTFS data.</div>
         <div class="source">${sourceLine(pack)}</div>
       </div>
     </footer>
@@ -1724,7 +1724,8 @@ function posterCss() {
     }
     .ss-table {
       width: 100%;
-      border-collapse: collapse;
+      border-collapse: separate;
+      border-spacing: 0;
       table-layout: fixed;
       border: 1px solid var(--route);
     }
