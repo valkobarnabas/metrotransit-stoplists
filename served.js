@@ -1642,7 +1642,6 @@ function posterCss() {
       text-transform: uppercase;
       font-weight: 700;
       color: var(--route);
-      line-height: 1.25;
     }
     .ident h1 {
       margin: 2px 0 3px;
