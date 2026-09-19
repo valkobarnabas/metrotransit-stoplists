@@ -11,16 +11,6 @@ Unofficial printable “stops from here” stop list posters for [Madison Metro 
 
 Print from the poster page: Letter, actual size, no headers or footers.
 
-## GitHub Pages
-
-This folder is a site root of its own. Put these files at the repository root (or in `/docs`) and enable Pages. Include `data/served.json.gz`, `data/locations.json`, and `data/metrologo-mark.png`. `.nojekyll` is already here. `data/pack.json.gz` is unused by this site and can be omitted.
-
-Do not open `index.html` as a local file (the data is gzipped and needs HTTP):
-
-```bash
-npx serve .
-```
-
 ## Rebuild the stop data
 
 From the parent `mmt_gtfs` repo (the folder that contains `stops.txt`):
