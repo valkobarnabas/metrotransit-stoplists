@@ -1248,9 +1248,9 @@ function titleCaseHeading(heading) {
 function posterKicker(poster) {
   const code = poster.titleCode || poster.routeName || "";
   if (poster.showHeading && poster.heading) {
-    return `Metro Transit ${titleCaseHeading(poster.heading)} Route ${code} Stop List`;
+    return `Metro Transit ${titleCaseHeading(poster.heading)} Route ${code} stop list`;
   }
-  return `Metro Transit Route ${code} Stop List`;
+  return `Metro Transit Route ${code} stop list`;
 }
 
 function pdfSlugFor(poster) {
@@ -1637,15 +1637,15 @@ function posterCss() {
       letter-spacing: -0.04em;
     }
     .ident .kicker {
-      font-size: 11px;
-      letter-spacing: 0.08em;
+      font-size: 10px;
+      letter-spacing: 0.16em;
       text-transform: uppercase;
       font-weight: 700;
       color: var(--route);
       line-height: 1.25;
     }
     .ident h1 {
-      margin: 4px 0 3px;
+      margin: 2px 0 3px;
       font-size: 26px;
       line-height: 1.05;
       font-weight: 700;
@@ -1741,6 +1741,11 @@ function posterCss() {
       border-right: 1px solid rgba(255,255,255,0.35);
       padding: 0.06in 0.07in 0.07in;
       vertical-align: bottom;
+    }
+    .ss-table th.sn,
+    .ss-table th.xf {
+      font-size: 10px;
+      letter-spacing: 0.03em;
     }
     .ss-table td {
       border-bottom: 1px solid var(--rule);
