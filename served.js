@@ -982,7 +982,7 @@ function onlyServedHtml(boards) {
   const names = [...new Set(boards.map(prettyHeadsign))].filter(Boolean);
   if (!names.length) return "";
   const phrase = names.length === 1 ? names[0] : names.length === 2 ? `${names[0]} and ${names[1]}` : `${names.slice(0, -1).join(", ")}, and ${names[names.length - 1]}`;
-  return `<div class="only-served">(stop only served by ${escapeHtml(phrase)})</div>`;
+  return `<div class="only-served">(only served by ${escapeHtml(phrase)})</div>`;
 }
 
 function headboardHtml(board) {
