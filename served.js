@@ -1326,7 +1326,7 @@ function sheetHtml(poster, pack) {
     ${destNoteHtml(poster.destNote)}
     <footer class="notes">
       <div>
-        <div>This is a citizen-made stop list intended to improve accessibility, not an official Metro Transit bulletin. Times are trip-weighted averages from GTFS data.</div>
+        <div>This is a citizen-made stop list intended to improve accessibility, not an official Metro Transit bulletin. Times are trip-weighted averages.</div>
         <div class="source">${sourceLine(pack)}</div>
       </div>
     </footer>
