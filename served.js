@@ -445,12 +445,27 @@ function uniqueBoards(items) {
   return out;
 }
 
+function nextVisitMinutes(inst, code) {
+  const idx = inst.seq.indexOf(code);
+  if (idx < 0) return null;
+  const m = inst.minutes && inst.minutes[idx];
+  return Number.isFinite(m) ? m : null;
+}
+
+function consumeThrough(inst, code) {
+  const idx = inst.seq.indexOf(code);
+  if (idx < 0) return false;
+  inst.seq.splice(0, idx + 1);
+  if (inst.minutes) inst.minutes.splice(0, idx + 1);
+  return true;
+}
+
 function emitStop(code, serving, subset, emittedEnds, onlyBoards) {
   const rows = [];
   let num = 0;
   let den = 0;
   for (const inst of serving) {
-    const m = inst.minAt[code];
+    const m = nextVisitMinutes(inst, code);
     if (m == null) continue;
     num += m * inst.trips;
     den += inst.trips;
@@ -464,9 +479,7 @@ function emitStop(code, serving, subset, emittedEnds, onlyBoards) {
   });
   const ends = [];
   for (const inst of subset) {
-    const idx = inst.seq.indexOf(code);
-    if (idx < 0) continue;
-    inst.seq.splice(0, idx + 1);
+    if (!consumeThrough(inst, code)) continue;
     if (!inst.seq.length) ends.push(inst.board);
   }
   const boards = [];
@@ -684,7 +697,7 @@ function mergeInstances(instances) {
     board: inst.board,
     trips: inst.trips,
     seq: inst.remaining.slice(),
-    minAt: Object.fromEntries(inst.remaining.map((s, i) => [s, inst.minutes[i]])),
+    minutes: (inst.minutes || []).slice(),
   }));
   const emittedEnds = new Set();
 
@@ -828,7 +841,7 @@ function transfersForStop(stopCode, posterRouteName, radius, pack, opts) {
 function squareHtml(route) {
   const bg = route.c || "#333366";
   const ink = route.t || "#fff";
-  return `<span class="sq" style="background:${escapeHtml(bg)};color:${escapeHtml(ink)}">${escapeHtml(route.n)}</span>`;
+  return `<span class="sq" style="background:${escapeHtml(bg)};color:${escapeHtml(ink)}"><span class="mark">${escapeHtml(route.n)}</span></span>`;
 }
 
 function transferGroups(xfer) {
@@ -1000,7 +1013,7 @@ function routeBadgeHtml(code, color, ink) {
   const size = 0.92;
   let font = name.length > 2 ? 42 : name.length > 1 ? 56 : 72;
   font = Math.max(11, Math.round(font * (size / 0.92)));
-  return `<div class="badge" style="background:${escapeHtml(color || "#333366")};color:${escapeHtml(ink || "#fff")};width:${size}in;height:${size}in;font-size:${font}px">${escapeHtml(name)}</div>`;
+  return `<div class="badge" style="background:${escapeHtml(color || "#333366")};color:${escapeHtml(ink || "#fff")};width:${size}in;height:${size}in;font-size:${font}px"><span class="mark">${escapeHtml(name)}</span></div>`;
 }
 
 function normalizeLoi(rec) {
@@ -1510,6 +1523,13 @@ function posterCss() {
       font-weight: 800;
       line-height: 1;
       letter-spacing: -0.04em;
+    }
+    .badge .mark,
+    .sq .mark {
+      display: block;
+      line-height: 1;
+      text-box-trim: trim-both;
+      text-box-edge: cap alphabetic;
     }
     .ident .kicker {
       font-size: 10px;
