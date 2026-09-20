@@ -1622,7 +1622,9 @@ function posterCss() {
       border-collapse: separate;
       border-spacing: 0;
       table-layout: fixed;
-      border: 1px solid var(--route);
+      border: 0;
+      border-left: 1px solid var(--route);
+      border-right: 1px solid var(--route);
     }
     .ss-table th {
       font-size: 8.5px;
