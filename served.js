@@ -1781,6 +1781,10 @@ function posterCss() {
     }
     .ss-table tr.end.variant td::after { background: var(--rule); }
     .ss-table tr.end.variant-alt td { background: #fff; }
+    .ss-table tbody tr:last-child td::after {
+      content: none;
+      display: none;
+    }
     .ss-table th:last-child,
     .ss-table td:last-child { border-right: 0; }
     .ss-table .idx { width: 0.72in; font-variant-numeric: tabular-nums; font-weight: 600; white-space: nowrap; }
@@ -1791,8 +1795,19 @@ function posterCss() {
     .ss-table .xf { width: auto; }
     .stop-name { font-weight: 600; }
     .stop-no { color: var(--muted); font-weight: 500; }
-    .xfer { line-height: inherit; }
-    .xfer-cluster { white-space: nowrap; }
+    .xfer {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      row-gap: 4px;
+      max-width: 100%;
+    }
+    .xfer-cluster {
+      display: inline-flex;
+      flex-wrap: wrap;
+      align-items: center;
+      row-gap: 4px;
+    }
     .xfer-plus {
       display: inline-flex;
       align-items: center;
