@@ -1717,7 +1717,7 @@ function posterCss() {
       border: 0;
       border-left: 1px solid var(--route);
       border-right: 1px solid var(--route);
-      padding-bottom: 1px;
+      border-bottom: 1px solid var(--route);
     }
     .ss-table th {
       font-size: 8.5px;
@@ -1923,7 +1923,7 @@ function posterCss() {
     footer.notes {
       margin-top: auto;
       padding-top: 8px;
-      border-top: 1px solid var(--rule);
+      border-top: 0;
       font-size: 9.5px;
       line-height: 1.4;
       color: var(--muted);
