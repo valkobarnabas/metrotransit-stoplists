@@ -1349,6 +1349,14 @@ function posterKicker(poster) {
   return `Metro Transit Route ${code} stop list`;
 }
 
+function packPdfSlug(posters) {
+  const stop = String((posters[0] && posters[0].stopCode) || "").trim();
+  const codes = [...new Set((posters || []).map((p) => String(p.titleCode || "route").toLowerCase()))];
+  if (codes.length === 1 && posters[0]) return pdfSlugFor(posters[0]);
+  if (codes.length && codes.length <= 4) return ["served", ...codes, stop].filter(Boolean).join("-");
+  return ["served", stop].filter(Boolean).join("-");
+}
+
 function pdfSlugFor(poster) {
   const bits = ["served", String(poster.titleCode || "route").toLowerCase()];
   if (poster.showHeadboard && poster.destLabel) {
@@ -1468,19 +1476,47 @@ const POSTER_CHROME_SCRIPT = String.raw`
   function isPhone() {
     return window.matchMedia && window.matchMedia("(pointer: coarse)").matches;
   }
+  function pdfSlug() {
+    var body = document.body && document.body.getAttribute("data-pdf-name");
+    if (body) return body;
+    var sheet = document.querySelector(".sheet[data-pdf-name]");
+    return (sheet && sheet.getAttribute("data-pdf-name")) || document.title;
+  }
   function printPoster() {
+    var slug = pdfSlug();
+    var prev = document.title;
+    var parentPrev = null;
+    document.title = slug;
+    try {
+      if (window.parent && window.parent !== window) {
+        parentPrev = window.parent.document.title;
+        window.parent.document.title = slug;
+      }
+    } catch (e) {}
+    var restored = false;
+    function restore() {
+      if (restored) return;
+      restored = true;
+      document.title = prev;
+      try { if (parentPrev != null) window.parent.document.title = parentPrev; } catch (e) {}
+      window.removeEventListener("afterprint", restore);
+    }
+    window.addEventListener("afterprint", restore);
     if (inIframe() && isPhone()) {
       var w = window.open("", "_blank");
       if (w) {
         w.document.open();
         w.document.write("<!DOCTYPE html>\n" + document.documentElement.outerHTML);
         w.document.close();
+        w.document.title = slug;
         w.focus();
         try { w.print(); } catch (e) {}
+        restore();
         return;
       }
     }
     window.print();
+    setTimeout(restore, 2500);
   }
   var printBtn = document.getElementById("print-poster");
   if (printBtn) printBtn.addEventListener("click", printPoster);
@@ -1881,6 +1917,7 @@ function renderServedHtml(pack, posters, extra) {
   const stopCode = posters[0] ? posters[0].stopCode : "";
   const name = (pack.geo && pack.geo[stopCode] && pack.geo[stopCode].n) || stopCode;
   const sheets = posters.map((p) => sheetHtml(p, pack)).join("\n");
+  const pdfSlug = packPdfSlug(posters);
   const source =
     feed.feed_version || feed.v
       ? `Source: Madison Metro GTFS ${escapeHtml(feed.feed_version || feed.v)}.`
@@ -1890,13 +1927,13 @@ function renderServedHtml(pack, posters, extra) {
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Metro Transit stop list posters · ${escapeHtml(name)} · ${escapeHtml(stopCode)}</title>
+  <title>${escapeHtml(pdfSlug)}</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=Share+Tech+Mono&display=swap" rel="stylesheet" />
   <style>${posterCss()}</style>
 </head>
-<body>
+<body data-pdf-name="${escapeHtml(pdfSlug)}">
   <div class="chrome">
     <button type="button" id="print-poster">Print/Save as PDF</button>
     <span class="hint" id="page-count">Measuring size…</span>
