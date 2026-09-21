@@ -1819,7 +1819,6 @@ function posterCss() {
     .only-led .mark {
       display: block;
       line-height: 1;
-      transform: translateY(1px);
     }
     .ss-table tr.variant td.sn .only-led { font-style: normal; }
     .tt-note {
