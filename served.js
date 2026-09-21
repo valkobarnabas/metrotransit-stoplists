@@ -1026,12 +1026,32 @@ function prettyHeadsign(board) {
   return parts.code || dest;
 }
 
+function needsWideStopName(poster) {
+  if (String(poster.titleCode || "").toUpperCase() === "A2") return true;
+  for (const row of poster.rows || []) {
+    const names = new Set((row.onlyBoards || []).map(prettyHeadsign));
+    if (
+      names.has("A to East Campus via High Crossing") &&
+      names.has("A to Junction via High Crossing")
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
 function onlyServedHtml(boards) {
   if (!boards || !boards.length) return "";
   const names = [...new Set(boards.map(prettyHeadsign))].filter(Boolean);
   if (!names.length) return "";
-  const phrase = names.length === 1 ? names[0] : names.length === 2 ? `${names[0]} and ${names[1]}` : `${names.slice(0, -1).join(", ")}, and ${names[names.length - 1]}`;
-  return `<div class="only-served">(only served by ${escapeHtml(phrase)})</div>`;
+  const led = (name) => `<span class="only-led"><span class="mark">${escapeHtml(name)}</span></span>`;
+  const phrase =
+    names.length === 1
+      ? led(names[0])
+      : names.length === 2
+        ? `${led(names[0])} and ${led(names[1])}`
+        : `${names.slice(0, -1).map(led).join(", ")}, and ${led(names[names.length - 1])}`;
+  return `<div class="only-served${names.length > 1 ? " many" : ""}">(only served by${phrase})</div>`;
 }
 
 function headboardHtml(board) {
@@ -1366,7 +1386,7 @@ function sheetHtml(poster, pack) {
   );
   const board = poster.showHeadboard ? headboardHtml(poster.primaryBoard) : "";
   const qr = mapQrHtml(poster, pack);
-  return `<section class="sheet" data-pdf-name="${escapeHtml(pdfSlugFor(poster))}" style="--route:${escapeHtml(poster.color)};--route-ink:${escapeHtml(poster.ink)}">
+  return `<section class="sheet${needsWideStopName(poster) ? " wide-sn" : ""}" data-pdf-name="${escapeHtml(pdfSlugFor(poster))}" style="--route:${escapeHtml(poster.color)};--route-ink:${escapeHtml(poster.ink)}">
     <header class="mast${qr ? " has-qr" : ""}">
       <div class="badges">${routeBadgeHtml(poster.titleCode, poster.color, poster.ink)}</div>
       <div class="ident">
@@ -1707,6 +1727,8 @@ function posterCss() {
     .ss-table .idx { width: 0.72in; font-variant-numeric: tabular-nums; font-weight: 600; white-space: nowrap; }
     .ss-table .min { width: 0.85in; font-variant-numeric: tabular-nums; font-weight: 600; }
     .ss-table .sn { width: 2.55in; }
+    .sheet.wide-sn .ss-table .sn { width: 3.24in; }
+    .sheet.wide-sn .only-served { white-space: nowrap; }
     .ss-table .xf { width: auto; }
     .stop-name { font-weight: 600; }
     .stop-no { color: var(--muted); font-weight: 500; }
@@ -1772,6 +1794,27 @@ function posterCss() {
       line-height: 1.3;
       color: var(--muted);
     }
+    .only-served:not(.many) { white-space: nowrap; }
+    .only-led {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      margin-left: 0.45em;
+      font-family: "Share Tech Mono", "Consolas", monospace;
+      font-style: normal;
+      font-weight: 400;
+      font-size: 8.5px;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      line-height: 1;
+      background: var(--led-bg);
+      color: var(--led);
+      border: 1px solid #2b2b2b;
+      padding: 1px 0.3em;
+      vertical-align: middle;
+      box-sizing: border-box;
+    }
+    .ss-table tr.variant td.sn .only-led { font-style: normal; }
     .tt-note {
       margin: 0;
       font-size: 10.5px;
