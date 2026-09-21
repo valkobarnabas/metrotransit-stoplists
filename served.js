@@ -1051,7 +1051,7 @@ function onlyServedHtml(boards) {
       : names.length === 2
         ? `${led(names[0])} and ${led(names[1])}`
         : `${names.slice(0, -1).map(led).join(", ")}, and ${led(names[names.length - 1])}`;
-  return `<div class="only-served${names.length > 1 ? " many" : ""}">(only served by${phrase})</div>`;
+  return `<div class="only-served${names.length > 1 ? " many" : ""}"><span class="only-cap">(only served by</span>${phrase}<span class="only-cap">)</span></div>`;
 }
 
 function headboardHtml(board) {
@@ -1786,20 +1786,23 @@ function posterCss() {
       font-style: normal;
     }
     .only-served {
-      display: block;
+      display: flex;
+      align-items: center;
+      flex-wrap: nowrap;
+      gap: 0.35em;
       margin-top: 1px;
       font-style: italic;
       font-weight: 400;
       font-size: 9px;
-      line-height: 1.3;
+      line-height: 1;
       color: var(--muted);
     }
-    .only-served:not(.many) { white-space: nowrap; }
+    .only-served.many { flex-wrap: wrap; }
     .only-led {
       display: inline-flex;
       align-items: center;
       justify-content: center;
-      margin-left: 0.45em;
+      height: 13px;
       font-family: "Share Tech Mono", "Consolas", monospace;
       font-style: normal;
       font-weight: 400;
@@ -1810,9 +1813,13 @@ function posterCss() {
       background: var(--led-bg);
       color: var(--led);
       border: 1px solid #2b2b2b;
-      padding: 1px 0.3em;
-      vertical-align: middle;
+      padding: 0 0.32em;
       box-sizing: border-box;
+    }
+    .only-led .mark {
+      display: block;
+      line-height: 1;
+      transform: translateY(1px);
     }
     .ss-table tr.variant td.sn .only-led { font-style: normal; }
     .tt-note {
