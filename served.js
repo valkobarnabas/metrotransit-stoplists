@@ -1737,26 +1737,48 @@ function posterCss() {
       letter-spacing: 0.03em;
     }
     .ss-table td {
-      border-bottom: 1px solid var(--rule);
-      border-right: 1px solid var(--ink);
+      position: relative;
+      border-bottom: 0;
+      border-right: 0;
       padding: 0.055in 0.07in;
       vertical-align: top;
       font-size: 10.5px;
       line-height: 1.25;
       background: #fff;
     }
-    .ss-table tr.alt td { background: #f3f1ed; }
-    .ss-table tr.variant td {
-      background: #d4d1cb;
-      border-bottom-color: var(--ink);
+    .ss-table td::before {
+      content: "";
+      position: absolute;
+      top: 0;
+      bottom: 0;
+      right: 0;
+      width: 1px;
+      background: var(--ink);
+      pointer-events: none;
+      z-index: 2;
     }
+    .ss-table td:last-child::before { content: none; }
+    .ss-table td::after {
+      content: "";
+      position: absolute;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      height: 1px;
+      background: var(--rule);
+      pointer-events: none;
+      z-index: 1;
+    }
+    .ss-table tr.alt td { background: #f3f1ed; }
+    .ss-table tr.variant td { background: #d4d1cb; }
+    .ss-table tr.variant td::after { background: var(--ink); }
     .ss-table tr.variant td.sn { font-style: italic; }
     .ss-table tr.variant-alt td { background: #fff; }
     .ss-table tr.end.variant td {
       background: #d4d1cb;
       font-style: normal;
-      border-bottom-color: var(--rule);
     }
+    .ss-table tr.end.variant td::after { background: var(--rule); }
     .ss-table tr.end.variant-alt td { background: #fff; }
     .ss-table th:last-child,
     .ss-table td:last-child { border-right: 0; }
