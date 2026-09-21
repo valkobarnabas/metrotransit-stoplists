@@ -1717,6 +1717,7 @@ function posterCss() {
       border: 0;
       border-left: 1px solid var(--route);
       border-right: 1px solid var(--route);
+      padding-bottom: 1px;
     }
     .ss-table th {
       font-size: 8.5px;
