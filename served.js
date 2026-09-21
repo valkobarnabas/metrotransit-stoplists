@@ -802,6 +802,41 @@ function routeDepartsFrom(pack, routeName, stopCode) {
   return departingRoutesAt(pack, stopCode).has(String(routeName || "").toLowerCase());
 }
 
+function addHourMinutes(hours, route, code, minutes) {
+  const r = String(route || "");
+  const c = String(code || "");
+  const t = Number(minutes);
+  if (!r || !c || !Number.isFinite(t)) return hours;
+  if (!hours[r]) hours[r] = {};
+  const prev = hours[r][c];
+  if (!prev) hours[r][c] = [t, t];
+  else {
+    if (t < prev[0]) prev[0] = t;
+    if (t > prev[1]) prev[1] = t;
+  }
+  return hours;
+}
+
+function serviceSpan(pack, routeName, stopCode) {
+  const table = pack && pack.hours;
+  if (!table) return null;
+  const byStop = table[routeName];
+  if (!byStop) return null;
+  const span = byStop[stopCode];
+  if (!Array.isArray(span) || span.length < 2) return null;
+  const first = Number(span[0]);
+  const last = Number(span[1]);
+  if (!Number.isFinite(first) || !Number.isFinite(last)) return null;
+  return { first, last };
+}
+
+function serviceOverlaps(pack, fromRoute, fromStop, toRoute, toStop) {
+  const from = serviceSpan(pack, fromRoute, fromStop);
+  const to = serviceSpan(pack, toRoute, toStop);
+  if (!from || !to) return true;
+  return to.last >= from.first;
+}
+
 function transfersForStop(stopCode, posterRouteName, radius, pack, opts) {
   const excludeSchool = !!(opts && opts.excludeSchool);
   const geo = pack.geo || {};
@@ -811,7 +846,8 @@ function transfersForStop(stopCode, posterRouteName, radius, pack, opts) {
   const keep = (r, at) =>
     !sameRouteName(r.n, posterRouteName) &&
     !(excludeSchool && r.s) &&
-    routeDepartsFrom(pack, r.n, at);
+    routeDepartsFrom(pack, r.n, at) &&
+    serviceOverlaps(pack, posterRouteName, stopCode, r.n, at);
   const same = here.filter((r) => keep(r, stopCode));
   const nearby = [];
   if (origin && radius > 0) {
@@ -1932,6 +1968,8 @@ const api = {
   migrateLocations,
   loiItemsForStop,
   transfersForStop,
+  serviceOverlaps,
+  addHourMinutes,
   headsignLabel,
 };
 

@@ -46,6 +46,7 @@ function main() {
   }
 
   const agg = new Map();
+  const hours = {};
   let tripN = 0;
   for (const trip of trips) {
     const route = routeById[trip.route_id];
@@ -62,6 +63,7 @@ function main() {
       if (!stop) continue;
       const code = publicStopCode(stop);
       const t = parseTime(st.departure_time || st.arrival_time);
+      served.addHourMinutes(hours, route.route_short_name, code, t.minutes);
       if (t0 == null) t0 = t.minutes;
       let m = t.minutes - t0;
       if (m < 0) m += 24 * 60;
@@ -161,6 +163,7 @@ function main() {
     stops: index,
     geo,
     stopRoutes,
+    hours,
     patterns,
     radius: { recommended: served.DEFAULT_RADIUS, unit: "ft" },
     mapQr: Object.fromEntries(
@@ -230,6 +233,14 @@ function probe(pack) {
     const d = served.distM(pack.geo[a], pack.geo[b]);
     console.log(`  ${a} ↔ ${b}: ${served.metersToFeet(d)} ft`);
   }
+
+  const names = (xfer) =>
+    [...xfer.same.map((r) => r.n), ...xfer.others.map((x) => x.r.n)].join(" ") || "(none)";
+  const night = served.transfersForStop("0039", "82", served.DEFAULT_RADIUS, pack, { excludeSchool: true });
+  const peak = served.transfersForStop("0201", "65", served.DEFAULT_RADIUS, pack, { excludeSchool: true });
+  console.log("\nHours-aware transfers:");
+  console.log(`  82 @ #0039 → ${names(night)}`);
+  console.log(`  65 @ #0201 → ${names(peak)}`);
 }
 
 main();
