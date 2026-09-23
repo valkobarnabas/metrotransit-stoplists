@@ -1472,7 +1472,7 @@ function sheetHtml(poster, pack) {
           <th class="idx">Stops ↓<br />from here</th>
           <th class="min">Minutes ↓<br />from here</th>
           <th class="sn">Stop name</th>
-          <th class="xf">Transfer to route(s)</th>
+          <th class="xf">Transfer to</th>
         </tr>
       </thead>
       <tbody>
