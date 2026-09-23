@@ -1362,7 +1362,7 @@ function postersForStop(pack, stopCode, opts) {
         heading,
         destLabel: board ? headsignLabel(board) : "",
         primaryBoard: board,
-        showHeadboard: split,
+        showHeadboard: split || !!options.showHeadboard,
         color: route.c || "#333366",
         ink: route.t || "#ffffff",
         rows,
@@ -1632,7 +1632,7 @@ function posterCss() {
       content: "";
       position: absolute;
       left: 0; top: 0; bottom: 0;
-      width: 0.13in;
+      width: 0.24in;
       background: var(--route);
     }
     header.mast {

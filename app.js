@@ -6,6 +6,7 @@ const pickedName = document.getElementById("picked-name");
 const pickedMeta = document.getElementById("picked-meta");
 const routesEl = document.getElementById("routes");
 const noSchoolEl = document.getElementById("noschool");
+const headboardEl = document.getElementById("headboard");
 const goEl = document.getElementById("go");
 const useCurateEl = document.getElementById("use-curate");
 const curateStatus = document.getElementById("curate-status");
@@ -210,6 +211,7 @@ function generate() {
       routes: [name],
       radius: S.DEFAULT_RADIUS,
       excludeSchool: noSchoolEl.checked,
+      showHeadboard: !!(headboardEl && headboardEl.checked),
       locations: mergedLocations(),
     });
     lastHtml = html;
@@ -302,6 +304,11 @@ noSchoolEl.addEventListener("change", () => {
 routesEl.addEventListener("change", () => {
   goEl.disabled = !chosenName();
 });
+if (headboardEl) {
+  headboardEl.addEventListener("change", () => {
+    if (selected && !outEl.hidden) generate();
+  });
+}
 document.addEventListener("visibilitychange", () => {
   if (!document.hidden) refreshCurateStatus();
 });
