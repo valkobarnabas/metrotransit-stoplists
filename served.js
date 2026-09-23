@@ -140,9 +140,9 @@ function mapQrHtml(poster, pack) {
   const svg = qrSvgFromBits(bits);
   if (!svg) return "";
   return `<div class="qr-block">
-    <a href="${escapeHtml(url)}" target="_blank" rel="noopener" title="Route ${escapeHtml(code)} info">
+    <a href="${escapeHtml(url)}" target="_blank" rel="noopener" title="Route map and detours">
       ${svg}
-      <div class="qr-cap">Route Info<br />and detours</div>
+      <div class="qr-cap">Route map<br />and detours</div>
     </a>
   </div>`;
 }
@@ -837,6 +837,59 @@ function serviceOverlaps(pack, fromRoute, fromStop, toRoute, toStop) {
   return to.last >= from.first;
 }
 
+function chooseNearbyTransfers(nearby) {
+  const byRoute = new Map();
+  for (const x of nearby) {
+    let list = byRoute.get(x.r.n);
+    if (!list) byRoute.set(x.r.n, (list = []));
+    list.push(x);
+  }
+  const eligible = new Map();
+  for (const [name, list] of byRoute) {
+    list.sort((a, b) => a.d - b.d || String(a.code).localeCompare(String(b.code)));
+    const feet = roundFeetUp10(list[0].d);
+    const opts = [];
+    const seen = new Set();
+    for (const x of list) {
+      if (roundFeetUp10(x.d) !== feet) continue;
+      if (seen.has(x.code)) continue;
+      seen.add(x.code);
+      opts.push(x);
+    }
+    eligible.set(name, opts);
+  }
+  const names = [...eligible.keys()].sort(
+    (a, b) => eligible.get(a).length - eligible.get(b).length || compareBoardCodes(a, b)
+  );
+  const chosen = new Map();
+  for (const name of names) {
+    const opts = eligible.get(name);
+    let pick = opts[0];
+    let pickScore = nearbyStopScore(pick, eligible);
+    for (const opt of opts.slice(1)) {
+      const score = nearbyStopScore(opt, eligible);
+      if (
+        score > pickScore ||
+        (score === pickScore &&
+          (opt.d < pick.d || (opt.d === pick.d && String(opt.code) < String(pick.code))))
+      ) {
+        pick = opt;
+        pickScore = score;
+      }
+    }
+    chosen.set(name, pick);
+  }
+  return [...chosen.values()];
+}
+
+function nearbyStopScore(cand, eligible) {
+  let n = 0;
+  for (const opts of eligible.values()) {
+    if (opts.some((o) => o.code === cand.code)) n += 1;
+  }
+  return n;
+}
+
 function transfersForStop(stopCode, posterRouteName, radius, pack, opts) {
   const excludeSchool = !!(opts && opts.excludeSchool);
   const geo = pack.geo || {};
@@ -862,13 +915,8 @@ function transfersForStop(stopCode, posterRouteName, radius, pack, opts) {
       }
     }
   }
-  const best = new Map();
-  for (const x of nearby) {
-    const prev = best.get(x.r.n);
-    if (!prev || x.d < prev.d || (x.d === prev.d && x.code < prev.code)) best.set(x.r.n, x);
-  }
   same.sort((a, b) => compareBoardCodes(a.n, b.n));
-  const others = [...best.values()].sort(
+  const others = chooseNearbyTransfers(nearby).sort(
     (a, b) => a.d - b.d || compareBoardCodes(a.r.n, b.r.n)
   );
   return { same, others };
@@ -903,11 +951,15 @@ function transferGroups(xfer) {
   return groups;
 }
 
+function walkIconHtml() {
+  return `<svg class="walk" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M9.5 1.5a1.5 1.5 0 1 1-3 0 1.5 1.5 0 0 1 3 0M6.44 3.752A.75.75 0 0 1 7 3.5h1.445c.742 0 1.32.643 1.243 1.38l-.43 4.083a1.8 1.8 0 0 1-.088.395l-.318.906.213.242a.8.8 0 0 1 .114.175l2 4.25a.75.75 0 1 1-1.357.638l-1.956-4.154-1.68-1.921A.75.75 0 0 1 6 8.96l.138-2.613-.435.489-.464 2.786a.75.75 0 1 1-1.48-.246l.5-3a.75.75 0 0 1 .18-.375l2-2.25Z"/><path d="M6.25 11.745v-1.418l1.204 1.375.261.524a.8.8 0 0 1-.12.231l-2.5 3.25a.75.75 0 1 1-1.19-.914zm4.22-4.215-.494-.494.205-1.843.006-.067 1.124 1.124h1.44a.75.75 0 0 1 0 1.5H11a.75.75 0 0 1-.531-.22Z"/></svg>`;
+}
+
 function groupHtml(group) {
   const squares = group.routes.map(squareHtml).join("");
   if (!group.code) return `<span class="xfer-cluster">${squares}</span>`;
   const feet = roundFeetUp10(group.d);
-  return `<span class="xfer-cluster">${squares}<span class="xfer-stop"> (${feet} ft. away)</span></span>`;
+  return `<span class="xfer-cluster">${squares}<span class="xfer-stop">(${walkIconHtml()}${feet} ft.)</span></span>`;
 }
 
 function transfersHtml(xfer, geo) {
@@ -1836,7 +1888,16 @@ function posterCss() {
       box-sizing: border-box;
     }
     .xfer-cluster .sq:last-of-type { margin-right: 0; }
-    .xfer-stop { font-size: 8px; color: var(--muted); }
+    .xfer-stop {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.15em;
+      margin-left: 0.2em;
+      font-size: 8px;
+      color: var(--muted);
+      white-space: nowrap;
+    }
+    .xfer-stop .walk { width: 11px; height: 11px; flex: none; }
     .loi-list {
       display: flex;
       flex-wrap: wrap;
@@ -1876,14 +1937,14 @@ function posterCss() {
       display: inline-flex;
       align-items: center;
       justify-content: center;
-      height: 13px;
+      height: 14px;
       font-family: "Share Tech Mono", "Consolas", monospace;
       font-style: normal;
       font-weight: 400;
-      font-size: 8.5px;
+      font-size: 8px;
       letter-spacing: 0.04em;
       text-transform: uppercase;
-      line-height: 1;
+      line-height: 8px;
       background: var(--led-bg);
       color: var(--led);
       border: 1px solid #2b2b2b;
@@ -1892,7 +1953,9 @@ function posterCss() {
     }
     .only-led .mark {
       display: block;
-      line-height: 1;
+      line-height: 8px;
+      text-box-trim: trim-both;
+      text-box-edge: cap alphabetic;
     }
     .ss-table tr.variant td.sn .only-led { font-style: normal; }
     .tt-note {

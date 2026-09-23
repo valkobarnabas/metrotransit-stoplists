@@ -20,3 +20,6 @@ node github-stops-served/build-data.js
 ```
 
 That writes `data/served.json.gz` (patterns + coordinates).
+
+## Attribution
+The walking figure beside a transfer distance is Bootstrap Icons’ `person-walking` ([twbs/icons](https://github.com/twbs/icons)), MIT License. Copyright 2019–2024 The Bootstrap Authors.
